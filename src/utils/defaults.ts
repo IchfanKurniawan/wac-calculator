@@ -1,4 +1,5 @@
-import type { AppState, FixtureProduct, FixtureGroup } from '../types';
+import type { AppState, FixtureProduct, FixtureGroup, WBScenario } from '../types';
+import { WB_SOURCE_IDS, WB_USE_IDS } from '../types';
 
 export const mkProd = (): FixtureProduct => ({ name: '', qty: 0, rate: 0 });
 
@@ -12,6 +13,11 @@ export const mkFixtureGroup = (): FixtureGroup => ({
   SHOWER:          [mkProd()],
 });
 
+export const mkWBScenario = (): WBScenario => ({
+  sources: WB_SOURCE_IDS.map(id => ({ id, availableManual: 0, volumeDiolah: 0 })),
+  uses:    WB_USE_IDS.map(id   => ({ id, dariAlt: 0, dariRecycle: 0 })),
+});
+
 export const DEFAULT_STATE: AppState = {
   building: {
     name: '',
@@ -23,42 +29,21 @@ export const DEFAULT_STATE: AppState = {
   },
   fixtures: mkFixtureGroup(),
   hasUrinal: true,
-  wcRecyclePct: 0,
-  showerRecyclePct: 0,
   landscape: {
     area: 0,
-    pctFromNonPrimary: 0,
     zones: [{ label: 'Area 1', basRate: 5, dsgRate: 0, areaShare: 1 }],
   },
-  coolingTower: { enabled: false, load: 0, pctFromNonPrimary: 0 },
+  coolingTower: { enabled: false, load: 0 },
   rainwater: {
     hasTank: false,
+    rainyDayPct: 0.55,
     tankCapacity: 0,
     avgRainfall: 50,
     runoffCoef: 0.78,
     roofArea: 0,
-    useForFlush: false,
-    useForIrrigation: false,
-    useForCT: false,
   },
-  waterRecycle: {
-    hasSystem: false,
-    capacity: 0,
-    sourcesTap: false,
-    sourcesWudhu: false,
-    sourcesShower: false,
-    sourcesRainwater: false,
-    sourcesAHU: 0,
-    sourcesOthers: 0,
-    useForFlush: false,
-    useForIrrigation: false,
-    useForCT: false,
-  },
-  factory: {
-    shift1: 0,
-    shift2: 0,
-    shift3: 0,
-    malePct: 0.9,
-    equipment: [],
+  waterBalance: {
+    wet: mkWBScenario(),
+    dry: mkWBScenario(),
   },
 };

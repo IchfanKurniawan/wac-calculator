@@ -80,8 +80,8 @@ export const TYPOLOGY_CONFIG: Record<TypologyId, TypologyConfig> = {
 
   PABRIK: {
     label: 'Pabrik (Factory)',
-    active: true,
-    phase: 1,
+    active: false,
+    phase: 2,
     note: 'Memerlukan data shift 1, 2, dan 3',
     opHours: 24,
     opHoursStandard: 8,

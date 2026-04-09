@@ -31,129 +31,130 @@ export type FixtureGroup = Record<FixtureTypeId, FixtureProduct[]>;
 export interface BuildingData {
   name: string;
   typology: TypologyId;
-  nla: number;          // m²
-  occupant1: number;    // primary (employees / residents)
-  occupant2: number;    // secondary (visitors / units)
-  opHours: number;      // operational hours per day
+  nla: number;       // m²
+  occupant1: number; // primary occupant (employees for office)
+  occupant2: number; // secondary (future typologies)
+  opHours: number;   // operational hours per day
 }
 
 // ─── Landscape zone ───────────────────────────────────────────────────────────
 export interface LandscapeZone {
   label: string;
-  basRate: number;    // L/m²
-  dsgRate: number;    // L/m²
-  areaShare: number;  // 0–1, must sum to 1
+  basRate: number;   // L/m² per irrigation
+  dsgRate: number;   // L/m² per irrigation
+  areaShare: number; // 0–1, all zones must sum to 1
 }
 
 export interface LandscapeData {
-  area: number;              // m² total irrigated area
-  pctFromNonPrimary: number; // 0–1
+  area: number;   // m² total irrigated area
   zones: LandscapeZone[];
 }
 
 // ─── Cooling Tower ────────────────────────────────────────────────────────────
 export interface CoolingTowerData {
   enabled: boolean;
-  load: number;              // TR (Ton Refrigeration)
-  pctFromNonPrimary: number; // 0–1
+  load: number; // TR (Ton Refrigeration)
 }
 
 // ─── Rainwater Harvesting ─────────────────────────────────────────────────────
 export interface RainwaterData {
   hasTank: boolean;
-  tankCapacity: number;    // Liters
-  avgRainfall: number;     // mm (average)
-  runoffCoef: number;      // 0–1
-  roofArea: number;        // m²
-  useForFlush: boolean;
-  useForIrrigation: boolean;
-  useForCT: boolean;
+  rainyDayPct: number;  // 0–1  fraction of days with rain
+  tankCapacity: number; // Liters
+  avgRainfall: number;  // mm (average per event)
+  runoffCoef: number;   // 0–1
+  roofArea: number;     // m²
 }
 
-// ─── Water Recycle ────────────────────────────────────────────────────────────
-export interface WaterRecycleData {
-  hasSystem: boolean;
-  capacity: number;          // L/day max capacity
-  sourcesTap: boolean;       // uses tap water as source
-  sourcesWudhu: boolean;
-  sourcesShower: boolean;
-  sourcesRainwater: boolean;
-  sourcesAHU: number;        // L/day from AHU condensate
-  sourcesOthers: number;     // L/day from other sources
-  useForFlush: boolean;
-  useForIrrigation: boolean;
-  useForCT: boolean;
+// ─── Neraca Air (Water Balance) — NB 2.0 approach ────────────────────────────
+// Two manual matrices: wet-day scenario and dry-day scenario.
+// "Tersedia" (available) is auto-computed from design values.
+// "Diolah" (processed) and fulfillment columns are user-entered.
+
+export interface WBSourceRow {
+  id: string;
+  // For rows whose "available" is user-supplied (CT condensate, others):
+  availableManual: number; // L/day — used when id is 'ct_condensate' or 'others'
+  volumeDiolah: number;    // L/day — user input (≤ available)
 }
 
-// ─── Factory-specific data ────────────────────────────────────────────────────
-export interface FactoryEquipment {
-  name: string;
-  qty: number;
-  outputPerUnit: number; // L/day per unit
+export interface WBUseRow {
+  id: string;
+  dariAlt: number;     // L/day from alternative water — user input
+  dariRecycle: number; // L/day from recycled water   — user input
 }
 
-export interface FactoryData {
-  shift1: number;
-  shift2: number;
-  shift3: number;
-  malePct: number;     // 0–1
-  equipment: FactoryEquipment[];
+export interface WBScenario {
+  sources: WBSourceRow[];
+  uses: WBUseRow[];
 }
+
+export interface WaterBalanceData {
+  wet: WBScenario; // Hari Basah
+  dry: WBScenario; // Hari Kering
+}
+
+// Source / use IDs used in both scenarios
+export const WB_SOURCE_IDS = [
+  'flush',        // (R) Flushing WC — available = flushDsg
+  'urinal',       // (R) Peturasan/Urinal — available = urinalDsg
+  'tap',          // (R) Keran Tembok/Wastafel — available = tembokDsg + wastafelDsg
+  'wudhu',        // (A) Keran Wudhu — available = wudhuDsg
+  'shower',       // (R) Shower Mandi — available = showerDsg
+  'ct_condensate',// (A) Air Kondensasi CT — available = user input
+  'rainwater',    // (A) Air Hujan — wet = availWet, dry = 0
+  'others',       // Lainnya — available = user input
+] as const;
+export type WBSourceId = typeof WB_SOURCE_IDS[number];
+
+export const WB_USE_IDS = [
+  'flush',      // Flushing WC (Flush Valve + Tank) — kebutuhan = flushDsg
+  'urinal',     // Peturasan/Urinal — kebutuhan = urinalDsg
+  'tap',        // Keran Tembok/Wastafel — kebutuhan = tembokDsg + wastafelDsg
+  'wudhu',      // Keran Wudhu — kebutuhan = wudhuDsg
+  'shower',     // Shower Mandi — kebutuhan = showerDsg
+  'ct_makeup',  // Make-up Water CT — kebutuhan = ctDsg
+  'irrigation', // Irigasi Lansekap — kebutuhan = lsDsg
+] as const;
+export type WBUseId = typeof WB_USE_IDS[number];
 
 // ─── Full application state ───────────────────────────────────────────────────
 export interface AppState {
   building: BuildingData;
   fixtures: FixtureGroup;
   hasUrinal: boolean;
-  wcRecyclePct: number;    // 0–1: fraction of WC flush from recycle
-  showerRecyclePct: number;
   landscape: LandscapeData;
   coolingTower: CoolingTowerData;
   rainwater: RainwaterData;
-  waterRecycle: WaterRecycleData;
-  factory: FactoryData;
+  waterBalance: WaterBalanceData;
 }
 
-// ─── Calculation results ──────────────────────────────────────────────────────
+// ─── Calculation intermediates (returned by engine, consumed by UI) ───────────
 export interface DailyConsumption {
-  // Flush (L/day)
-  wcBL: number;        wcDsg: number;
-  urinalBL: number;    urinalDsg: number;
-  flushBL: number;     flushDsg: number;
-  flushPrimary: number;
+  // Flush
+  wcBL: number;       wcDsg: number;
+  urinalBL: number;   urinalDsg: number;
+  flushBL: number;    flushDsg: number;
 
-  // Tap (L/day)
-  tembokBL: number;    tembokDsg: number;
-  wastafelBL: number;  wastafelDsg: number;
-  wudhuBL: number;     wudhuDsg: number;
-  showerBL: number;    showerDsg: number;
-  tapBL: number;       tapDsg: number;
-  tapPrimary: number;
+  // Tap
+  tembokBL: number;   tembokDsg: number;
+  wastafelBL: number; wastafelDsg: number;
+  wudhuBL: number;    wudhuDsg: number;
+  showerBL: number;   showerDsg: number;
+  tapBL: number;      tapDsg: number;
 
-  // Landscape (L/day)
-  lsBL: number;        lsDsg: number;
-  lsPrimary: number;
+  // Landscape
+  lsBL: number;       lsDsg: number;
 
-  // Cooling Tower (L/day)
-  ctBL: number;        ctDsg: number;
-  ctPrimary: number;
+  // Cooling Tower
+  ctBL: number;       ctDsg: number;
 
-  // Equipment (Factory only, L/day)
-  equipBL: number;     equipDsg: number;
-
-  // Rainwater reductions (L/day)
-  rwFlushRed: number;
-  rwIrrigRed: number;
-  rwCTRed: number;
-
-  // Recycle reductions (L/day)
-  recycleFlushRed: number;
-  recycleIrrigRed: number;
-  recycleCTRed: number;
-
-  // Totals
+  // Totals (before water balance)
   totalBL: number;
   totalDsg: number;
+
+  // After neraca air reduction (weighted wet+dry)
+  totalReduction: number;
   totalFromPrimary: number;
 }
 
@@ -161,22 +162,22 @@ export interface WAC2Result {
   total: number;
   hemat: number;
   pct: number;
-  pts: number; // 0–4
+  pts: number; // 0–3 per NB 1.3
 }
 
 export interface WAC1Result {
-  baselineNorm: number;  // L/unit/day, typology-specific
+  baselineNorm: number; // L/unit/day normalised per typology
   designNorm: number;
-  ratio: number;         // design / baseline
-  savingsPct: number;    // 1 - ratio
+  ratio: number;        // design / baseline
+  savingsPct: number;   // 1 − ratio
   p2Pass: boolean;
-  pts: number;           // 0–8
+  pts: number;          // 0–8
 }
 
 export interface RainwaterResult {
   idealVolume: number;
   capRatio: number;
-  availWet: number;
+  availWet: number; // L/day available on wet days
 }
 
 export interface CalcResults {
@@ -187,7 +188,7 @@ export interface CalcResults {
   unit: string;
 }
 
-// ─── Export schema ────────────────────────────────────────────────────────────
+// ─── Export / Import schema ───────────────────────────────────────────────────
 export interface ExportSchema {
   version: '2.0';
   exportedAt: string;
