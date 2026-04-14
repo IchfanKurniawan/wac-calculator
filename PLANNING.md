@@ -278,3 +278,54 @@ src/
     │   └── FixtureSection.tsx  Reusable fixture product row table
     └── App.tsx                 6-step wizard + all step components + Sidebar
 ```
+
+---
+
+## 11. Formula Verification Notes
+
+### Flushing WC vs Urinal in Neraca Air
+- **Source row "Flushing WC (Flush Valve + Tank)"** → uses `wcDsg` (WC valve+tank only)
+- **Source row "Peturasan / Urinal"** → uses `urinalDsg` (urinal only)
+- These are **separate** rows in Neraca Air; `wcDsg ≠ flushDsg` (flushDsg = wcDsg + urinalDsg)
+
+### Keran Tembok Formula — NB 2.0 vs NB 1.2 v2.2
+| Version | Formula | Same? |
+|---|---|---|
+| NB 2.0 (oldest) | `D72 = Occupant1 × J17(tap_usage=2.5) × J12(hw_duration=0.15)` | ✅ Same |
+| NB 1.2 v2.2 | `L40 = ((S19*S14))*I3 = tap_usage(2.5) × hw_duration(0.15) × occupant` | ✅ Same |
+
+The **formula is identical**. Only the **Keran Wastafel baseline** differs: 6 L/menit (NB 2.0) → 8 L/menit (NB 1.2).
+
+---
+
+## 12. Constraints & Validation Rules
+
+| Field | Constraint | Message |
+|---|---|---|
+| NLA | Minimum 250 m² | "NLA minimal 250 m²" |
+| Landscape basRate | Locked at 5 L/m² (read-only) | Info label: "Standar SNI — tidak dapat diubah" |
+| WAC P2 | Passes whenever `baselineNorm > 0` | Always passes if data is filled |
+| Rainfall label | "Persentase Hari Hujan minimal 10 Tahun (%)" | — |
+
+---
+
+## 13. Neraca Air Auto-Fill & Sync Features
+
+### Auto-Fill Toggles (⚡ Auto button per row)
+
+**Side A — Sources:**
+Each source row has an **Auto** toggle. When ON:
+- `volumeDiolah` is set to and locked at `computeSourceAvailable(id, daily, ...)`
+- Input field becomes read-only
+- Reactive: re-syncs automatically when upstream fixture/landscape data changes
+
+**Side B — Uses:**
+Each use row has TWO **Auto** buttons (mutually exclusive per row):
+- **Alt Auto**: `dariAlt = computeUseRequired(id, daily)`, `dariRecycle = 0`
+- **Rec Auto**: `dariRecycle = computeUseRequired(id, daily)`, `dariAlt = 0`
+- Reactive: re-syncs when design daily values change
+
+### Sync Wet ↔ Dry Toggle (🔗 Samakan Basah & Kering)
+When activated, any change to either Hari Basah or Hari Kering scenario is simultaneously applied to both. Useful when wet and dry day inputs should be identical.
+
+Auto-fill state is **local to the session** (not exported/imported).

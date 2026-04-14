@@ -220,7 +220,9 @@ export function calcWAC1(
   const designNorm   = tc.normFn(designFromPrimary, occupant1, nla, opHours);
   const ratio        = baselineNorm > 0 ? designNorm / baselineNorm : 1;
   const savingsPct   = 1 - ratio;
-  const p2Pass       = ratio <= 0.80;
+  // WAC P2: passes as long as user has filled data (baseline computed)
+  // Scoring from ratio is for WAC 1 points only
+  const p2Pass       = baselineNorm > 0;
 
   const pts = !p2Pass ? 0
     : ratio <= 0.45 ? 8
@@ -280,7 +282,7 @@ export function computeSourceAvailable(
   manualValue: number,
 ): number {
   switch (sourceId) {
-    case 'flush':        return daily.flushDsg;
+    case 'flush':        return daily.wcDsg;    // WC only (valve+tank), NOT including urinal
     case 'urinal':       return daily.urinalDsg;
     case 'tap':          return daily.tembokDsg + daily.wastafelDsg;
     case 'wudhu':        return daily.wudhuDsg;
@@ -298,7 +300,7 @@ export function computeUseRequired(
   daily: DailyConsumption,
 ): number {
   switch (useId) {
-    case 'flush':      return daily.flushDsg;
+    case 'flush':      return daily.wcDsg;   // WC only (valve+tank), NOT including urinal
     case 'urinal':     return daily.urinalDsg;
     case 'tap':        return daily.tembokDsg + daily.wastafelDsg;
     case 'wudhu':      return daily.wudhuDsg;
