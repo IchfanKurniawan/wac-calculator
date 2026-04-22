@@ -22,6 +22,7 @@ import type {
 } from '../types';
 import { FIXTURE_BASELINES } from '../constants/baselines';
 import { TYPOLOGY_CONFIG } from '../constants/typologies';
+import { LANDSCAPE_BASELINE_RATE } from '../constants/landscape';
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
 
@@ -160,7 +161,7 @@ function calcLandscape(state: AppState) {
   if (!ls.area || ls.zones.length === 0) return { lsBL: 0, lsDsg: 0 };
 
   const freq = tc.irrigationFreq;
-  const lsBL  = ls.zones.reduce((s, z) => s + (z.basRate || 5) * (z.areaShare || 0) * ls.area * freq, 0);
+  const lsBL  = ls.zones.reduce((s, z) => s + LANDSCAPE_BASELINE_RATE * (z.areaShare || 0) * ls.area * freq, 0);
   const lsDsg = ls.zones.reduce((s, z) => s + (z.dsgRate  || 0) * (z.areaShare || 0) * ls.area * freq, 0);
   return { lsBL, lsDsg };
 }
@@ -232,7 +233,8 @@ export function calcWAC1(
     : ratio <= 0.65 ? 4
     : ratio <= 0.70 ? 3
     : ratio <= 0.75 ? 2
-    : 1;
+    : ratio <= 0.80 ? 1
+    : 0;
 
   return { baselineNorm, designNorm, ratio, savingsPct, p2Pass, pts };
 }
@@ -311,7 +313,6 @@ export function computeUseRequired(
   }
 }
 
-// Landscape share validation helper
 export function lsShareSum(zones: { areaShare: number }[]): number {
   return zones.reduce((s, z) => s + (z.areaShare || 0), 0);
 }

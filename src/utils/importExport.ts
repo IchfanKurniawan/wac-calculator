@@ -5,6 +5,12 @@
 
 import type { AppState, TypologyId, FixtureTypeId } from '../types';
 import { WB_SOURCE_IDS, WB_USE_IDS } from '../types';
+import {
+  isLandscapeShareExact,
+  LANDSCAPE_BASELINE_RATE,
+  LANDSCAPE_MAX_ZONES,
+  landscapeSharePct,
+} from '../constants/landscape';
 import { sanitizeText, sanitizeNumber, sanitizeRatio, sanitizeBool, sanitizeEnum } from './sanitize';
 import { mkWBScenario } from './defaults';
 
@@ -118,15 +124,20 @@ function validateFixtures(raw: unknown, errors: string[]) {
 
 function validateLandscape(raw: unknown, errors: string[]) {
   const ls = obj(raw);
-  const zones = Array.isArray(ls.zones) ? (ls.zones as unknown[]).map(z => {
+  const zones = Array.isArray(ls.zones) ? (ls.zones as unknown[]).slice(0, LANDSCAPE_MAX_ZONES).map(z => {
     const zz = obj(z);
     return {
       label: sanitizeText(zz.label ?? 'Area'),
-      basRate: sanitizeNumber(zz.basRate, 0, 1000),
+      basRate: LANDSCAPE_BASELINE_RATE,
       dsgRate: sanitizeNumber(zz.dsgRate, 0, 1000),
       areaShare: sanitizeRatio(zz.areaShare),
     };
-  }) : [{ label: 'Area 1', basRate: 5, dsgRate: 0, areaShare: 1 }];
+  }) : [{ label: 'Area 1', basRate: LANDSCAPE_BASELINE_RATE, dsgRate: 0, areaShare: 1 }];
+
+  if (!isLandscapeShareExact(zones)) {
+    errors.push(`Total area share lansekap harus tepat 100.000% (saat ini ${landscapeSharePct(zones).toFixed(3)}%).`);
+  }
+
   return { area: sanitizeNumber(ls.area, 0, 1e8), zones };
 }
 

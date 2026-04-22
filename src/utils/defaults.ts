@@ -1,5 +1,6 @@
 import type { AppState, FixtureProduct, FixtureGroup, WBScenario } from '../types';
 import { WB_SOURCE_IDS, WB_USE_IDS } from '../types';
+import { LANDSCAPE_BASELINE_RATE } from '../constants/landscape';
 
 export const mkProd = (): FixtureProduct => ({ name: '', qty: 0, rate: 0 });
 
@@ -31,7 +32,7 @@ export const DEFAULT_STATE: AppState = {
   hasUrinal: true,
   landscape: {
     area: 0,
-    zones: [{ label: 'Area 1', basRate: 5, dsgRate: 0, areaShare: 1 }],
+    zones: [{ label: 'Area 1', basRate: LANDSCAPE_BASELINE_RATE, dsgRate: 0, areaShare: 1 }],
   },
   coolingTower: { enabled: false, load: 0 },
   rainwater: {

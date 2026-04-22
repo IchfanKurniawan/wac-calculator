@@ -12,15 +12,20 @@ import { WB_SOURCE_IDS, WB_USE_IDS } from './types';
 import { TYPOLOGY_CONFIG } from './constants/typologies';
 import { FIXTURE_AVAILABILITY } from './constants/baselines';
 import {
-  calcAll, calcWAC2, lsShareSum,
+  isLandscapeShareExact,
+  LANDSCAPE_BASELINE_RATE,
+  LANDSCAPE_MAX_ZONES,
+  landscapeSharePct,
+} from './constants/landscape';
+import {
+  calcAll, calcWAC2,
   calcRainwater, computeSourceAvailable, computeUseRequired,
 } from './engine/calculations';
 import { downloadJSON, pickJSONFile, parseAndValidate } from './utils/importExport';
-import { downloadCSV, downloadTemplate, pickCSVFile, parseCSV } from './utils/csvImportExport';
 import { DEFAULT_STATE, mkWBScenario } from './utils/defaults';
 import {
   C, fmt, fmtPct, useBreakpoint,
-  Label, Inp, Sel, Card, SecTitle, Pill, Tog, Check, PctInp,
+  Label, Inp, Sel, Card, SecTitle, Pill, Tog, PctInp,
 } from './components/shared/atoms';
 import { FixtureSection } from './components/shared/FixtureSection';
 
@@ -185,8 +190,8 @@ function Step2({ state, set }:{ state:AppState; set:(s:AppState)=>void }) {
 function Step3({ state, set }:{ state:AppState; set:(s:AppState)=>void }) {
   const ls = state.landscape;
   const ct = state.coolingTower;
-  const shareSum = lsShareSum(ls.zones);
-  const shareOk = Math.abs(shareSum-1) < 0.001;
+  const sharePct = landscapeSharePct(ls.zones);
+  const shareOk = isLandscapeShareExact(ls.zones);
   const { isMobile } = useBreakpoint();
   const updZone = (i:number, field:string, val:string|number) => {
     const zones = ls.zones.map((z,j)=>j===i?{...z,[field]:val}:z);
@@ -213,11 +218,11 @@ function Step3({ state, set }:{ state:AppState; set:(s:AppState)=>void }) {
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8 }}>
                 {/* Baseline locked at 5 L/m² */}
                 <div>
-                  <Label>Baseline (L/m²)</Label>
-                  <div style={{ padding:'7px 10px', background:C.s100, borderRadius:8, fontSize:13, color:C.s500, fontWeight:600 }}>
-                    5 <span style={{ fontSize:10, color:C.s300 }}>(tetap)</span>
+                    <Label>Baseline (L/m²)</Label>
+                    <div style={{ padding:'7px 10px', background:C.s100, borderRadius:8, fontSize:13, color:C.s500, fontWeight:600 }}>
+                      {LANDSCAPE_BASELINE_RATE} <span style={{ fontSize:10, color:C.s300 }}>(tetap)</span>
+                    </div>
                   </div>
-                </div>
                 <div><Label>Desain (L/m²)</Label><Inp value={z.dsgRate||''} onChange={v=>updZone(i,'dsgRate',v)} step={0.001}/></div>
                 <div><Label>% Area</Label><Inp value={parseFloat(((z.areaShare||0)*100).toFixed(3))||''} onChange={v=>updZone(i,'areaShare',Math.min(1,(v as number)/100))} step={0.001}/></div>
               </div>
@@ -235,7 +240,7 @@ function Step3({ state, set }:{ state:AppState; set:(s:AppState)=>void }) {
                 <Inp type="text" value={z.label} onChange={v=>updZone(i,'label',v)} placeholder={`Area ${i+1}`}/>
                 {/* Baseline locked at 5 L/m² — read only */}
                 <div style={{ padding:'7px 10px', background:C.s100, borderRadius:8, fontSize:13, color:C.s500, fontWeight:600, textAlign:'center' }}>
-                  5 <span style={{ fontSize:9, color:C.s300 }}>(tetap)</span>
+                  {LANDSCAPE_BASELINE_RATE} <span style={{ fontSize:9, color:C.s300 }}>(tetap)</span>
                 </div>
                 <Inp value={z.dsgRate||''} onChange={v=>updZone(i,'dsgRate',v)} step={0.001}/>
                 <Inp value={parseFloat(((z.areaShare||0)*100).toFixed(3))||''} onChange={v=>updZone(i,'areaShare',Math.min(1,(v as number)/100))} step={0.001}/>
@@ -248,20 +253,20 @@ function Step3({ state, set }:{ state:AppState; set:(s:AppState)=>void }) {
           </>
         )}
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginTop:8, flexWrap:'wrap', gap:8 }}>
-          {ls.zones.length<5 && (
-            <button onClick={()=>set({...state,landscape:{...ls,zones:[...ls.zones,{label:`Area ${ls.zones.length+1}`,basRate:5,dsgRate:0,areaShare:0}]}})}
+          {ls.zones.length<LANDSCAPE_MAX_ZONES && (
+            <button onClick={()=>set({...state,landscape:{...ls,zones:[...ls.zones,{label:`Area ${ls.zones.length+1}`,basRate:LANDSCAPE_BASELINE_RATE,dsgRate:0,areaShare:0}]}})}
               style={{ fontSize:12, color:C.teal, background:'none', border:'none', cursor:'pointer', display:'flex', alignItems:'center', gap:4 }}>
               <Plus size={11}/> Tambah Zona
             </button>
           )}
           <div style={{ display:'flex', alignItems:'center', gap:6, fontSize:12 }}>
             <span style={{ color:C.s500 }}>Total area share:</span>
-            <span style={{ fontWeight:700, color:shareOk?C.green:C.red }}>{(shareSum*100).toFixed(3)}%</span>
-            {!shareOk && <span style={{ color:C.red }}>— harus tepat 100%</span>}
+            <span style={{ fontWeight:700, color:shareOk?C.green:C.red }}>{sharePct.toFixed(3)}%</span>
+            {!shareOk && <span style={{ color:C.red }}>— harus tepat 100.000%</span>}
           </div>
         </div>
         <div style={{ marginTop:10, fontSize:11, color:C.s400, padding:'8px 10px', background:C.s100, borderRadius:6 }}>
-          ℹ Baseline lansekap dikunci pada <strong>5 L/m²</strong> (standar SNI — tidak dapat diubah)
+          ℹ Baseline lansekap dikunci pada <strong>{LANDSCAPE_BASELINE_RATE} L/m²</strong> (standar SNI — tidak dapat diubah)
         </div>
       </Card>
 
@@ -410,7 +415,7 @@ function Step5({ state, set }:{ state:AppState; set:(s:AppState)=>void }) {
     const newDry = applyAuto('dry');
     if(changed) set({ ...state, waterBalance:{ wet:newWet, dry:newDry } });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[d.flushDsg, d.urinalDsg, d.tapDsg, d.wudhuDsg, d.showerDsg, d.ctDsg, d.lsDsg, rw.availWet, autoFillSrc]);
+  },[d.wcDsg, d.urinalDsg, d.tapDsg, d.wudhuDsg, d.showerDsg, d.ctDsg, d.lsDsg, rw.availWet, autoFillSrc]);
 
   // ── When auto-fill uses change, sync values ──
   useEffect(()=>{
@@ -427,11 +432,13 @@ function Step5({ state, set }:{ state:AppState; set:(s:AppState)=>void }) {
       });
       return { ...sc, uses:newUses };
     };
+    const newWet = applyUseAuto('wet');
+    const newDry = applyUseAuto('dry');
     if(changed){
-      set({ ...state, waterBalance:{ wet:applyUseAuto('wet'), dry:applyUseAuto('dry') } });
+      set({ ...state, waterBalance:{ wet:newWet, dry:newDry } });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[d.flushDsg,d.urinalDsg,d.tapDsg,d.wudhuDsg,d.showerDsg,d.ctDsg,d.lsDsg,autoFillAlt,autoFillRec]);
+  },[d.wcDsg,d.urinalDsg,d.tapDsg,d.wudhuDsg,d.showerDsg,d.ctDsg,d.lsDsg,autoFillAlt,autoFillRec]);
 
   const scenario  = state.waterBalance[tab];
   const isDry     = tab==='dry';
@@ -570,7 +577,7 @@ function Step5({ state, set }:{ state:AppState; set:(s:AppState)=>void }) {
             const meta = SOURCE_META[id];
             const avail = availFor(id);
             const diolah = diolahFor(id);
-            const over = diolah>avail && avail>0;
+            const over = diolah > avail;
             const isAuto = autoFillSrc.has(id);
             return (
               <div key={id} style={{ border:`1px solid ${C.s200}`, borderRadius:8, padding:12, marginBottom:10 }}>
@@ -609,7 +616,7 @@ function Step5({ state, set }:{ state:AppState; set:(s:AppState)=>void }) {
               const meta = SOURCE_META[id];
               const avail = availFor(id);
               const diolah = diolahFor(id);
-              const over = diolah>avail && avail>0;
+              const over = diolah > avail;
               const isAuto = autoFillSrc.has(id);
               return (
                 <div key={id} style={{ display:'grid', gridTemplateColumns:'24px 1fr 160px 160px 54px', gap:6, marginBottom:6, alignItems:'center' }}>
@@ -906,11 +913,11 @@ function Step6({ state }:{ state:AppState }) {
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 function Sidebar({ step, setStep, R, state,
-  onImportJSON, onImportCSV, onExportJSON, onExportCSV, onDownloadTemplate,
+  onImportJSON, onExportJSON,
   open, onClose }:
   { step:number; setStep:(n:number)=>void; R:ReturnType<typeof calcAll>;
-    state:AppState; onImportJSON:()=>void; onImportCSV:()=>void;
-    onExportJSON:()=>void; onExportCSV:()=>void; onDownloadTemplate:()=>void;
+    state:AppState; onImportJSON:()=>void;
+    onExportJSON:()=>void;
     open:boolean; onClose:()=>void }) {
   const { isDesktop } = useBreakpoint();
 
@@ -954,34 +961,27 @@ function Sidebar({ step, setStep, R, state,
       </div>
       {/* Import / Export */}
       <div style={{ padding:'10px 12px', borderTop:'1px solid rgba(255,255,255,0.08)' }}>
-        <div style={{ fontSize:9, color:'rgba(255,255,255,0.3)', textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:6 }}>Import</div>
-        <div style={{ display:'flex', gap:5, marginBottom:8 }}>
-          {[{l:'JSON',fn:onImportJSON},{l:'CSV',fn:onImportCSV}].map(({l,fn})=>(
-            <button key={l} onClick={fn} style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', gap:4,
-              padding:'6px 0', borderRadius:6, border:'1px solid rgba(255,255,255,0.2)',
-              background:'transparent', color:'rgba(255,255,255,0.65)', fontSize:10, cursor:'pointer', fontFamily:'inherit' }}>
-              <Upload size={10}/> {l}
-            </button>
-          ))}
+        <div style={{ fontSize:9, color:'rgba(255,255,255,0.3)', textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:8 }}>Data Proyek</div>
+        <div style={{ display:'grid', gap:6 }}>
+          <button onClick={onImportJSON} style={{
+            width:'100%', display:'flex', alignItems:'center', justifyContent:'center', gap:5,
+            padding:'7px 0', borderRadius:6, border:'1px solid rgba(255,255,255,0.2)',
+            background:'transparent', color:'rgba(255,255,255,0.7)', fontSize:10, cursor:'pointer', fontFamily:'inherit'
+          }}>
+            <Upload size={10}/> Impor JSON
+          </button>
+          <button onClick={onExportJSON} style={{
+            width:'100%', display:'flex', alignItems:'center', justifyContent:'center', gap:5,
+            padding:'7px 0', borderRadius:6, border:'1px solid rgba(211,254,171,0.4)',
+            background:'rgba(211,254,171,0.08)', color:'rgba(211,254,171,0.75)',
+            fontSize:10, cursor:'pointer', fontFamily:'inherit', fontWeight:700,
+          }}>
+            <Download size={10}/> Ekspor JSON
+          </button>
         </div>
-        <div style={{ fontSize:9, color:'rgba(255,255,255,0.3)', textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:6 }}>Export</div>
-        <div style={{ display:'flex', gap:5, marginBottom:8 }}>
-          {[{l:'JSON',fn:onExportJSON},{l:'CSV',fn:onExportCSV}].map(({l,fn})=>(
-            <button key={l} onClick={fn} style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', gap:4,
-              padding:'6px 0', borderRadius:6, border:'1px solid rgba(255,255,255,0.2)',
-              background:'transparent', color:'rgba(255,255,255,0.65)', fontSize:10, cursor:'pointer', fontFamily:'inherit' }}>
-              <Download size={10}/> {l}
-            </button>
-          ))}
+        <div style={{ fontSize:9, color:'rgba(255,255,255,0.25)', marginTop:8 }}>
+          Format data proyek yang didukung saat ini: JSON.
         </div>
-        <button onClick={onDownloadTemplate} style={{
-          width:'100%', display:'flex', alignItems:'center', justifyContent:'center', gap:5,
-          padding:'7px 0', borderRadius:6, border:'1px solid rgba(211,254,171,0.4)',
-          background:'rgba(211,254,171,0.08)', color:'rgba(211,254,171,0.7)',
-          fontSize:10, cursor:'pointer', fontFamily:'inherit', fontWeight:700,
-        }}>
-          <Download size={10}/> Unduh Template CSV
-        </button>
       </div>
       <div style={{ padding:'6px 16px 10px', fontSize:9, color:'rgba(255,255,255,0.2)' }}>
         Pilot: KANTOR · Phase 1
@@ -1023,21 +1023,7 @@ export default function App() {
     } catch(e:unknown){ showNotif('err',[e instanceof Error?e.message:'Gagal membaca file JSON.']); }
   },[]);
 
-  const handleImportCSV = useCallback(async()=>{
-    try {
-      const raw = await pickCSVFile();
-      const res = parseCSV(raw);
-      if(res.ok){ setState(res.state); setStep(1); showNotif('ok',['Data CSV berhasil diimpor.']); }
-      else showNotif('err', res.errors);
-    } catch(e:unknown){ showNotif('err',[e instanceof Error?e.message:'Gagal membaca file CSV.']); }
-  },[]);
-
   const handleExportJSON = useCallback(()=>{ downloadJSON(state); showNotif('ok',['Diekspor sebagai JSON.']); },[state]);
-  const handleExportCSV  = useCallback(()=>{ downloadCSV(state);  showNotif('ok',['Diekspor sebagai CSV.']); },[state]);
-  const handleTemplate   = useCallback(()=>{
-    downloadTemplate();
-    showNotif('ok',['Template CSV diunduh. Buka di Excel/Sheets, isi kolom VALUE, lalu Import CSV.']);
-  },[]);
 
   const stepContent = [
     <Step1 key={1} state={state} set={setState}/>,
@@ -1054,9 +1040,8 @@ export default function App() {
       {notif && <Notif type={notif.type} msgs={notif.msgs} onClose={()=>setNotif(null)}/>}
 
       <Sidebar step={step} setStep={setStep} R={R} state={state}
-        onImportJSON={handleImportJSON} onImportCSV={handleImportCSV}
-        onExportJSON={handleExportJSON} onExportCSV={handleExportCSV}
-        onDownloadTemplate={handleTemplate}
+        onImportJSON={handleImportJSON}
+        onExportJSON={handleExportJSON}
         open={sidebarOpen} onClose={()=>setSlide(false)}/>
 
       <div style={{ flex:1, display:'flex', flexDirection:'column', minWidth:0, overflowX:'hidden' }}>

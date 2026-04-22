@@ -96,7 +96,7 @@ export interface WaterBalanceData {
 
 // Source / use IDs used in both scenarios
 export const WB_SOURCE_IDS = [
-  'flush',        // (R) Flushing WC — available = flushDsg
+  'flush',        // (R) Flushing WC — available = wcDsg (WC valve+tank only)
   'urinal',       // (R) Peturasan/Urinal — available = urinalDsg
   'tap',          // (R) Keran Tembok/Wastafel — available = tembokDsg + wastafelDsg
   'wudhu',        // (A) Keran Wudhu — available = wudhuDsg
@@ -108,7 +108,7 @@ export const WB_SOURCE_IDS = [
 export type WBSourceId = typeof WB_SOURCE_IDS[number];
 
 export const WB_USE_IDS = [
-  'flush',      // Flushing WC (Flush Valve + Tank) — kebutuhan = flushDsg
+  'flush',      // Flushing WC (Flush Valve + Tank) — kebutuhan = wcDsg (WC valve+tank only)
   'urinal',     // Peturasan/Urinal — kebutuhan = urinalDsg
   'tap',        // Keran Tembok/Wastafel — kebutuhan = tembokDsg + wastafelDsg
   'wudhu',      // Keran Wudhu — kebutuhan = wudhuDsg

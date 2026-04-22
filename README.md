@@ -7,9 +7,11 @@ Mencakup: **WAC P2 · WAC 1 · WAC 2 · WAC 5 · WAC 6**
 - **Wizard 6 langkah** — Data Bangunan → Fitur Air → Lansekap & CT → Air Hujan → Daur Ulang → Hasil
 - **WAC 2 (NB 1.3):** ≥25%→1 poin, ≥50%→2 poin, ≥75%→3 poin
 - **WAC 1 (NB 1.2):** Baseline dinamis (dihitung), 0–8 poin
-- **Tipologi aktif:** Kantor (Office), Pabrik (Factory)
+- **Tipologi aktif:** Kantor (Office)
 - **Import / Export** data proyek dalam format JSON
 - **Real-time calculation** di setiap langkah
+- **Neraca Air auto-fill** yang reaktif terhadap perubahan desain
+- **Baseline lansekap terkunci** pada 5 L/mÂ² di seluruh alur aplikasi
 
 ## Setup & Development
 
@@ -64,4 +66,11 @@ src/
 
 ## Tipologi Mendatang (Phase 2)
 Mall/Retail · Apartemen/Hotel · Airport · Masjid · Stadium
-Konstanta semua tipologi sudah tersedia di `src/constants/typologies.ts`
+Konstanta dasar tipologi-tipologi tersebut sudah tersedia di `src/constants/typologies.ts`, tetapi belum siap diaktifkan hanya dengan mengubah `active: true`.
+
+Checklist sebelum tipologi baru diaktifkan:
+1. Semua input tipologi-spesifik sudah tersedia di UI.
+2. Rumus normalisasi dan hasil akhir sudah diverifikasi terhadap workbook sumber.
+3. Ketersediaan fixture dan kebutuhan Neraca Air tipologi tersebut sudah benar.
+4. Import/export JSON mendukung field tipologi itu tanpa kehilangan data.
+5. Copy hasil, satuan, dan edge case operasional sudah diuji.

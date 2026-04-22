@@ -65,7 +65,7 @@ export function FixtureSection({ type, products, onChange }: Props) {
           >
             <Inp type="text" value={p.name} onChange={v => upd(i, 'name', v)} placeholder={`Produk ${i + 1}`} />
             <Inp value={p.qty || ''} onChange={v => upd(i, 'qty', v)} step={1} />
-            <Inp value={p.rate || ''} onChange={v => upd(i, 'rate', v)} step={0.1} />
+            <Inp value={p.rate || ''} onChange={v => upd(i, 'rate', v)} step={0.001} />
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               {p.rate > 0 && (
                 <span style={{
