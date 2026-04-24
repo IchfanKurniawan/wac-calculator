@@ -1,6 +1,6 @@
-# GREENSHIP NB 1.2 — Kalkulator Air WAC
+# GREENSHIP NB v1.3 Kalkulator Air
 
-Web app kalkulator air untuk sertifikasi GREENSHIP NB v1.2.
+Web app kalkulator air untuk sertifikasi GREENSHIP. Formula utama masih mengikuti workbook sumber NB v1.2 dengan scoring WAC 2 NB 1.3.
 Mencakup: **WAC P2 · WAC 1 · WAC 2 · WAC 5 · WAC 6**
 
 ## Fitur
@@ -11,6 +11,10 @@ Mencakup: **WAC P2 · WAC 1 · WAC 2 · WAC 5 · WAC 6**
 - **Import / Export** data proyek dalam format JSON
 - **Real-time calculation** di setiap langkah
 - **Neraca Air auto-fill** yang reaktif terhadap perubahan desain
+- **Neraca Air menghitung hanya fixture yang diinput**; fixture tanpa jumlah unit dianggap tidak terpasang dan tidak membuat kebutuhan/tersedia baseline
+- **Draft tersimpan otomatis di browser** dan kembali saat halaman dibuka ulang
+- **Reset Data** menghapus seluruh isian pengguna dan mengembalikan aplikasi ke state awal
+- **Format angka Indonesia** untuk nilai tampilan: koma sebagai desimal dan titik sebagai pemisah ribuan
 - **Baseline lansekap terkunci** pada 5 L/mÂ² di seluruh alur aplikasi
 
 ## Setup & Development

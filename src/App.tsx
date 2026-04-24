@@ -22,9 +22,9 @@ import {
   calcRainwater, computeSourceAvailable, computeUseRequired,
 } from './engine/calculations';
 import { downloadJSON, pickJSONFile, parseAndValidate } from './utils/importExport';
-import { DEFAULT_STATE, mkWBScenario } from './utils/defaults';
+import { createDefaultState, mkWBScenario } from './utils/defaults';
 import {
-  C, fmt, fmtPct, useBreakpoint,
+  C, fmt, fmtFixed, fmtPct, useBreakpoint,
   Label, Inp, Sel, Card, SecTitle, Pill, Tog, PctInp,
 } from './components/shared/atoms';
 import { FixtureSection } from './components/shared/FixtureSection';
@@ -85,7 +85,10 @@ function Step1({ state, set }:{ state:AppState; set:(s:AppState)=>void }) {
           <div>
             <Label>Tipologi Bangunan</Label>
             <Sel value={state.building.typology}
-              onChange={v=>set({ ...DEFAULT_STATE, building:{ ...DEFAULT_STATE.building, typology:v as AppState['building']['typology'], name:state.building.name } })}
+              onChange={v=>{
+                const fresh = createDefaultState();
+                set({ ...fresh, building:{ ...fresh.building, typology:v as AppState['building']['typology'], name:state.building.name } });
+              }}
               options={Object.entries(TYPOLOGY_CONFIG).map(([k,v])=>({
                 value:k, disabled:!v.active,
                 label:v.label+(v.note?` — ${v.note}`:'')+(!v.active?' (segera hadir)':''),
@@ -261,8 +264,8 @@ function Step3({ state, set }:{ state:AppState; set:(s:AppState)=>void }) {
           )}
           <div style={{ display:'flex', alignItems:'center', gap:6, fontSize:12 }}>
             <span style={{ color:C.s500 }}>Total area share:</span>
-            <span style={{ fontWeight:700, color:shareOk?C.green:C.red }}>{sharePct.toFixed(3)}%</span>
-            {!shareOk && <span style={{ color:C.red }}>— harus tepat 100.000%</span>}
+            <span style={{ fontWeight:700, color:shareOk?C.green:C.red }}>{fmtFixed(sharePct,3)}%</span>
+            {!shareOk && <span style={{ color:C.red }}>— harus tepat 100,000%</span>}
           </div>
         </div>
         <div style={{ marginTop:10, fontSize:11, color:C.s400, padding:'8px 10px', background:C.s100, borderRadius:6 }}>
@@ -305,7 +308,7 @@ function Step4({ state, set }:{ state:AppState; set:(s:AppState)=>void }) {
           <PctInp value={rw.rainyDayPct} onChange={v=>upd('rainyDayPct',v)}
             label="Persentase Hari Hujan minimal 10 Tahun"/>
           <div style={{ fontSize:11, color:C.s400, marginTop:4 }}>
-            Hari Kering: {((1-rw.rainyDayPct)*100).toFixed(3)}%
+            Hari Kering: {fmtFixed((1-rw.rainyDayPct)*100,3)}%
           </div>
         </div>
         {rw.hasTank && (
@@ -667,7 +670,7 @@ function Step5({ state, set }:{ state:AppState; set:(s:AppState)=>void }) {
                   <span style={{ fontSize:13, fontWeight:500, color:C.s700 }}>{USE_META[id as WBUseId].label}</span>
                   <span style={{ fontSize:11, padding:'2px 8px', borderRadius:20, fontWeight:700,
                     background:over?'#FEF2F2':fpct>0?'#F0FDF4':C.s100, color:over?C.red:fpct>0?C.green:C.s300 }}>
-                    {(fpct*100).toFixed(1)}%
+                    {fmtPct(fpct)}
                   </span>
                 </div>
                 <div style={{ fontSize:11, color:C.s400, marginBottom:8 }}>Kebutuhan: {fmt(req,3)} L/hari</div>
@@ -745,7 +748,7 @@ function Step5({ state, set }:{ state:AppState; set:(s:AppState)=>void }) {
                     <span style={{ color:C.s400 }}>{USE_META[id as WBUseId].label.split(' ')[0]}:</span>
                     <span style={{ padding:'2px 8px', borderRadius:20, fontWeight:700,
                       background:over?'#FEF2F2':fpct>0?'#F0FDF4':C.s100, color:over?C.red:fpct>0?C.green:C.s300 }}>
-                      {(fpct*100).toFixed(1)}%{over?' ⚠':''}
+                  {fmtPct(fpct)}{over?' ⚠':''}
                     </span>
                   </div>
                 );
@@ -879,8 +882,8 @@ function Step6({ state }:{ state:AppState }) {
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData} margin={{ top:4, right:8, left:isMobile?0:10, bottom:4 }}>
               <XAxis dataKey="name" tick={{ fontSize:isMobile?9:11, fill:C.s500 }}/>
-              <YAxis tick={{ fontSize:10, fill:C.s500 }} tickFormatter={v=>v.toLocaleString('id-ID')} width={isMobile?40:55}/>
-              <Tooltip formatter={(v:number)=>[v.toLocaleString('id-ID')+' L/hari']}/>
+              <YAxis tick={{ fontSize:10, fill:C.s500 }} tickFormatter={v=>fmt(Number(v),0)} width={isMobile?40:55}/>
+              <Tooltip formatter={(v:number)=>[fmt(v,0)+' L/hari']}/>
               <Bar dataKey="baseline" fill="#CBD5E1" radius={[4,4,0,0]}/>
               <Bar dataKey="design"   fill={C.teal}  radius={[4,4,0,0]}/>
             </BarChart>
@@ -913,20 +916,19 @@ function Step6({ state }:{ state:AppState }) {
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 function Sidebar({ step, setStep, R, state,
-  onImportJSON, onExportJSON,
+  onImportJSON, onExportJSON, onResetAll,
   open, onClose }:
   { step:number; setStep:(n:number)=>void; R:ReturnType<typeof calcAll>;
     state:AppState; onImportJSON:()=>void;
-    onExportJSON:()=>void;
+    onExportJSON:()=>void; onResetAll:()=>void;
     open:boolean; onClose:()=>void }) {
   const { isDesktop } = useBreakpoint();
 
   const inner = (
     <div style={{ display:'flex', flexDirection:'column', height:'100%', background:C.teal }}>
       <div style={{ padding:'22px 18px 16px', borderBottom:'1px solid rgba(255,255,255,0.08)' }}>
-        <div style={{ fontSize:9, color:C.mint, fontWeight:700, letterSpacing:'0.12em', textTransform:'uppercase', marginBottom:4 }}>GREENSHIP NB v1.2</div>
+        <div style={{ fontSize:9, color:C.mint, fontWeight:700, letterSpacing:'0.12em', textTransform:'uppercase', marginBottom:4 }}>GREENSHIP NB v1.3</div>
         <div style={{ fontSize:17, fontWeight:800, color:C.white, lineHeight:1.2 }}>Kalkulator Air</div>
-        <div style={{ fontSize:9, color:'rgba(211,254,171,0.45)', marginTop:3, textTransform:'uppercase', letterSpacing:'0.05em' }}>WAC P2 · WAC 1 · WAC 2 · WAC 5 · WAC 6</div>
         {state.building.name && (
           <div style={{ marginTop:10, fontSize:11, color:'rgba(255,255,255,0.4)', fontStyle:'italic', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
             {state.building.name}
@@ -978,6 +980,14 @@ function Sidebar({ step, setStep, R, state,
           }}>
             <Download size={10}/> Ekspor JSON
           </button>
+          <button onClick={onResetAll} style={{
+            width:'100%', display:'flex', alignItems:'center', justifyContent:'center', gap:5,
+            padding:'7px 0', borderRadius:6, border:'1px solid rgba(255,255,255,0.18)',
+            background:'rgba(255,255,255,0.04)', color:'rgba(255,255,255,0.62)',
+            fontSize:10, cursor:'pointer', fontFamily:'inherit',
+          }}>
+            <Trash2 size={10}/> Reset Data
+          </button>
         </div>
         <div style={{ fontSize:9, color:'rgba(255,255,255,0.25)', marginTop:8 }}>
           Format data proyek yang didukung saat ini: JSON.
@@ -1000,14 +1010,74 @@ function Sidebar({ step, setStep, R, state,
 }
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
+const STORAGE_KEY = 'greenship-wac-calculator-state-v1';
+
+function asRecord(v: unknown): Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v) ? v as Record<string, unknown> : {};
+}
+
+function mergeStoredState(raw: unknown): AppState {
+  const base = createDefaultState();
+  const stored = asRecord(raw);
+  const stateLike = asRecord(stored.state ?? stored);
+  const building = asRecord(stateLike.building);
+  const fixtures = asRecord(stateLike.fixtures);
+  const landscape = asRecord(stateLike.landscape);
+  const coolingTower = asRecord(stateLike.coolingTower);
+  const rainwater = asRecord(stateLike.rainwater);
+  const waterBalance = asRecord(stateLike.waterBalance);
+
+  const mergeScenario = (key:'wet'|'dry') => {
+    const incoming = asRecord(waterBalance[key]);
+    const sources = Array.isArray(incoming.sources) ? incoming.sources.map(asRecord) : [];
+    const uses = Array.isArray(incoming.uses) ? incoming.uses.map(asRecord) : [];
+    return {
+      sources: base.waterBalance[key].sources.map(row => ({ ...row, ...(sources.find(r => r.id === row.id) ?? {}) })),
+      uses: base.waterBalance[key].uses.map(row => ({ ...row, ...(uses.find(r => r.id === row.id) ?? {}) })),
+    };
+  };
+
+  return {
+    ...base,
+    building: { ...base.building, ...building },
+    fixtures: { ...base.fixtures, ...fixtures } as AppState['fixtures'],
+    hasUrinal: typeof stateLike.hasUrinal === 'boolean' ? stateLike.hasUrinal : base.hasUrinal,
+    landscape: {
+      ...base.landscape,
+      ...landscape,
+      zones: Array.isArray(landscape.zones) ? landscape.zones as AppState['landscape']['zones'] : base.landscape.zones,
+    },
+    coolingTower: { ...base.coolingTower, ...coolingTower },
+    rainwater: { ...base.rainwater, ...rainwater },
+    waterBalance: {
+      wet: mergeScenario('wet'),
+      dry: mergeScenario('dry'),
+    },
+  };
+}
+
+function loadInitialState(): AppState {
+  if (typeof window === 'undefined') return createDefaultState();
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    return raw ? mergeStoredState(JSON.parse(raw)) : createDefaultState();
+  } catch {
+    return createDefaultState();
+  }
+}
+
 export default function App() {
   const [step, setStep]           = useState(1);
-  const [state, setState]         = useState<AppState>(DEFAULT_STATE);
+  const [state, setState]         = useState<AppState>(()=>loadInitialState());
   const [notif, setNotif]         = useState<{ type:'ok'|'err'|'warn'; msgs:string[] }|null>(null);
   const [sidebarOpen, setSlide]   = useState(false);
   const { isMobile, isTablet, isDesktop } = useBreakpoint();
 
   const R   = useMemo(()=>calcAll(state),[state]);
+
+  useEffect(()=>{
+    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* ignore private-mode storage errors */ }
+  },[state]);
 
   const showNotif = (type:'ok'|'err'|'warn', msgs:string[]) => {
     setNotif({ type, msgs });
@@ -1024,6 +1094,14 @@ export default function App() {
   },[]);
 
   const handleExportJSON = useCallback(()=>{ downloadJSON(state); showNotif('ok',['Diekspor sebagai JSON.']); },[state]);
+
+  const handleResetAll = useCallback(()=>{
+    try { window.localStorage.removeItem(STORAGE_KEY); } catch { /* ignore private-mode storage errors */ }
+    setState(createDefaultState());
+    setStep(1);
+    setSlide(false);
+    showNotif('ok',['Semua data isian berhasil direset.']);
+  },[]);
 
   const stepContent = [
     <Step1 key={1} state={state} set={setState}/>,
@@ -1042,6 +1120,7 @@ export default function App() {
       <Sidebar step={step} setStep={setStep} R={R} state={state}
         onImportJSON={handleImportJSON}
         onExportJSON={handleExportJSON}
+        onResetAll={handleResetAll}
         open={sidebarOpen} onClose={()=>setSlide(false)}/>
 
       <div style={{ flex:1, display:'flex', flexDirection:'column', minWidth:0, overflowX:'hidden' }}>

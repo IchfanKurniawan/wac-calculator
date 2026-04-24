@@ -135,7 +135,8 @@ function validateLandscape(raw: unknown, errors: string[]) {
   }) : [{ label: 'Area 1', basRate: LANDSCAPE_BASELINE_RATE, dsgRate: 0, areaShare: 1 }];
 
   if (!isLandscapeShareExact(zones)) {
-    errors.push(`Total area share lansekap harus tepat 100.000% (saat ini ${landscapeSharePct(zones).toFixed(3)}%).`);
+    const currentPct = landscapeSharePct(zones).toLocaleString('id-ID', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+    errors.push(`Total area share lansekap harus tepat 100,000% (saat ini ${currentPct}%).`);
   }
 
   return { area: sanitizeNumber(ls.area, 0, 1e8), zones };

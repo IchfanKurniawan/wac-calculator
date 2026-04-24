@@ -2,7 +2,7 @@
   "name": "greenship-wac-calculator",
   "version": "2.0.0",
   "private": true,
-  "description": "GREENSHIP NB 1.2 Water Calculator — WAC P2, WAC 1, WAC 2, WAC 5, WAC 6",
+  "description": "GREENSHIP NB v1.3 Kalkulator Air",
   "type": "module",
   "scripts": {
     "dev": "vite",

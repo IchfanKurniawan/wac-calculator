@@ -38,6 +38,10 @@ export function totalQty(products: FixtureProduct[]): number {
   return products.reduce((s, p) => s + (p.qty || 0), 0);
 }
 
+function installedRateOrZero(products: FixtureProduct[], baseline: number): number {
+  return totalQty(products) > 0 ? weightedAvgRate(products) || baseline : 0;
+}
+
 // ─── WAC 2 — Fixture Efficiency Scoring (NB 1.3) ─────────────────────────────
 
 /**
@@ -77,21 +81,22 @@ function calcFlush(state: AppState) {
   // Valve / Tank split by product quantities
   const valveQty = totalQty(fixtures.WC_FLUSH_VALVE);
   const tankQty  = totalQty(fixtures.WC_FLUSH_TANK);
+  const urinalQty = totalQty(fixtures.URINAL);
   const wcQty    = valveQty + tankQty;
-  const vSh = wcQty > 0 ? valveQty / wcQty : 0.5;
-  const tSh = 1 - vSh;
+  const vSh = wcQty > 0 ? valveQty / wcQty : 0;
+  const tSh = wcQty > 0 ? 1 - vSh : 0;
 
   const vBl = FIXTURE_BASELINES.WC_FLUSH_VALVE.baseline;
   const tBl = FIXTURE_BASELINES.WC_FLUSH_TANK.baseline;
   const uBl = FIXTURE_BASELINES.URINAL.baseline;
 
-  const vDsg = weightedAvgRate(fixtures.WC_FLUSH_VALVE) || vBl;
-  const tDsg = weightedAvgRate(fixtures.WC_FLUSH_TANK)  || tBl;
-  const uDsg = weightedAvgRate(fixtures.URINAL)         || uBl;
+  const vDsg = installedRateOrZero(fixtures.WC_FLUSH_VALVE, vBl);
+  const tDsg = installedRateOrZero(fixtures.WC_FLUSH_TANK, tBl);
+  const uDsg = hasUrinal && urinalQty > 0 ? weightedAvgRate(fixtures.URINAL) || uBl : 0;
 
   const wcBL  = wcFlushesPerDay * (vSh * vBl  + tSh * tBl);
   const wcDsg = wcFlushesPerDay * (vSh * vDsg + tSh * tDsg);
-  const urinalBL  = urinalFlushesPerDay * uBl;
+  const urinalBL  = hasUrinal && urinalQty > 0 ? urinalFlushesPerDay * uBl : 0;
   const urinalDsg = urinalFlushesPerDay * uDsg;
 
   return {
@@ -120,27 +125,29 @@ function calcTap(state: AppState) {
   // Tembok / Wastafel split
   const tQ   = totalQty(fixtures.KERAN_TEMBOK);
   const wQ   = totalQty(fixtures.KERAN_WASTAFEL);
+  const kdQ  = totalQty(fixtures.KERAN_WUDHU);
+  const shQ  = totalQty(fixtures.SHOWER);
   const tapQ = tQ + wQ;
-  const tSh  = tapQ > 0 ? tQ / tapQ : 0.5;
-  const wSh  = 1 - tSh;
+  const tSh  = tapQ > 0 ? tQ / tapQ : 0;
+  const wSh  = tapQ > 0 ? 1 - tSh : 0;
 
   const tBl  = FIXTURE_BASELINES.KERAN_TEMBOK.baseline;
   const wBl  = FIXTURE_BASELINES.KERAN_WASTAFEL.baseline;
   const kdBl = FIXTURE_BASELINES.KERAN_WUDHU.baseline;
   const shBl = FIXTURE_BASELINES.SHOWER.baseline;
 
-  const tDsg  = weightedAvgRate(fixtures.KERAN_TEMBOK)   || tBl;
-  const wDsg  = weightedAvgRate(fixtures.KERAN_WASTAFEL)  || wBl;
-  const kdDsg = weightedAvgRate(fixtures.KERAN_WUDHU)     || kdBl;
-  const shDsg = weightedAvgRate(fixtures.SHOWER)          || shBl;
+  const tDsg  = installedRateOrZero(fixtures.KERAN_TEMBOK, tBl);
+  const wDsg  = installedRateOrZero(fixtures.KERAN_WASTAFEL, wBl);
+  const kdDsg = installedRateOrZero(fixtures.KERAN_WUDHU, kdBl);
+  const shDsg = installedRateOrZero(fixtures.SHOWER, shBl);
 
   const tembokBL    = tapMinutes * tSh * tBl;
   const tembokDsg   = tapMinutes * tSh * tDsg;
   const wastafelBL  = tapMinutes * wSh * wBl;
   const wastafelDsg = tapMinutes * wSh * wDsg;
-  const wudhuBL     = wudhuMinutes * kdBl;
+  const wudhuBL     = kdQ > 0 ? wudhuMinutes * kdBl : 0;
   const wudhuDsg    = wudhuMinutes * kdDsg;
-  const showerBL    = showerMinutes * shBl;
+  const showerBL    = shQ > 0 ? showerMinutes * shBl : 0;
   const showerDsg   = showerMinutes * shDsg;
 
   return {

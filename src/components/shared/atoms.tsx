@@ -30,8 +30,15 @@ export const fmt = (v: number, d = 1) =>
     ? v.toLocaleString('id-ID', { maximumFractionDigits: d })
     : '—';
 
-export const fmtPct = (v: number) =>
-  typeof v === 'number' && isFinite(v) ? (v * 100).toFixed(1) + '%' : '—';
+export const fmtFixed = (v: number, d = 1) =>
+  typeof v === 'number' && isFinite(v)
+    ? v.toLocaleString('id-ID', { minimumFractionDigits: d, maximumFractionDigits: d })
+    : '—';
+
+export const fmtPct = (v: number, d = 1) =>
+  typeof v === 'number' && isFinite(v)
+    ? `${(v * 100).toLocaleString('id-ID', { maximumFractionDigits: d })}%`
+    : '—';
 
 // ─── Responsive breakpoint hook ───────────────────────────────────────────────
 export function useBreakpoint() {
@@ -80,7 +87,8 @@ export function Inp({ value, onChange, type = 'number', placeholder, step = 0.00
       type={type}
       value={value}
       disabled={disabled}
-      onChange={e => onChange(type === 'number' ? parseFloat(e.target.value) || 0 : e.target.value)}
+      onChange={e => onChange(type === 'number' ? parseFloat(e.target.value.replace(',', '.')) || 0 : e.target.value)}
+      lang="id-ID"
       placeholder={placeholder}
       step={step}
       min={min}

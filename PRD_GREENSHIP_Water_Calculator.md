@@ -1,9 +1,9 @@
 # Product Requirements Document (PRD)
-## GREENSHIP NB 1.2 — Water Calculator Web Application
+## GREENSHIP NB v1.3 Kalkulator Air Web Application
 
 | | |
 |---|---|
-| **Product Name** | Kalkulator Air GREENSHIP NB 1.2 |
+| **Product Name** | GREENSHIP NB v1.3 Kalkulator Air |
 | **Document Version** | 1.0 |
 | **Status** | Active Development |
 | **Phase** | Phase 1 — Pilot (Kantor / Office) |
@@ -40,7 +40,7 @@
 
 ## 1. Executive Summary
 
-The GREENSHIP NB 1.2 Water Calculator is a web-based tool that digitizes GBC Indonesia's official Excel-based water consumption assessment tool for GREENSHIP New Building certification. It enables architects, MEP engineers, and green building consultants to calculate a building's Water Consumption Index (WCI), evaluate compliance against GREENSHIP water credits (WAC P2, WAC 1, WAC 2, WAC 5, WAC 6), and produce a traceable calculation record.
+GREENSHIP NB v1.3 Kalkulator Air is a web-based tool that digitizes GBC Indonesia's official Excel-based water consumption assessment workflow for GREENSHIP New Building certification. It enables architects, MEP engineers, and green building consultants to calculate a building's Water Consumption Index (WCI), evaluate compliance against GREENSHIP water credits (WAC P2, WAC 1, WAC 2, WAC 5, WAC 6), and produce a traceable calculation record.
 
 The application replaces a complex, multi-sheet Excel workbook with a guided 6-step wizard that provides real-time feedback, structured data entry, validation, import/export capabilities, and a responsive interface accessible from desktop, tablet, and mobile devices.
 
@@ -66,7 +66,7 @@ GBC Indonesia provides water consumption assessment as a multi-sheet Microsoft E
 | Hidden backend sheets contain all formulas — opaque to users | Consultants cannot verify or explain calculations |
 | Excel formatting breaks on older/different versions | Data loss; wasted time |
 | No mobile access — Excel unusable on phones/tablets | Consultants cannot work on-site |
-| No data persistence between sessions | Lost work on browser close |
+| No data persistence between sessions | Mitigated by browser draft persistence in the web app |
 | No import/export standard format | Each project is siloed; no reuse |
 | Sliders for percentage inputs cause precision loss | Incorrect calculation inputs |
 
@@ -92,6 +92,7 @@ A purpose-built web application with built-in formula transparency, step-by-step
 - Zero backend infrastructure (fully client-side)
 - TypeScript coverage: 100% of business logic files
 - All numeric inputs: 3 decimal place precision
+- Displayed numbers use Indonesian formatting: comma decimals and period thousands separators
 - Lighthouse performance score ≥ 90
 - Accessible on all major browsers (Chrome, Firefox, Safari, Edge)
 
@@ -142,6 +143,8 @@ A purpose-built web application with built-in formula transparency, step-by-step
 - 6-step wizard UI with full responsive support
 - All WAC credits: P2, 1, 2, 5, 6
 - Import / Export: JSON
+- Browser draft persistence via localStorage
+- Global Reset Data action to clear all user-entered fields
 - Neraca Air (water balance) table — NB 2.0 structure
 - Auto-fill and sync toggles in Neraca Air
 - Real-time WAC 2 live scoring panel
@@ -196,12 +199,13 @@ A purpose-built web application with built-in formula transparency, step-by-step
 - System auto-computes: weighted average rate, product share %, "Hemat" or "Tidak Hemat" badge
 - System displays live WAC 2 score (0–3 pts) updating in real time
 - Toggle for "Ada Urinal" switches male WC calculation between urinal and no-urinal mode
+- Fixture types with no installed quantity are treated as not installed; they do not contribute baseline/default demand to Neraca Air
 - WAC 2 scoring per NB 1.3: ≥25%→1, ≥50%→2, ≥75%→3
 
 ### FR-03: Landscape & Cooling Tower Entry
 - Landscape: up to 5 area zones; each with design rate (L/m²) and area share (%)
 - Landscape baseline rate = 5 L/m² (locked, non-editable, per SNI standard)
-- Area share sum must equal 100.000% — live validation indicator
+- Area share sum must equal 100,000% — live validation indicator
 - Cooling Tower: toggle (enabled/disabled), load input (TR)
 - CT baseline = CT design (no savings modeled for CT fixture efficiency)
 
@@ -216,6 +220,7 @@ A purpose-built web application with built-in formula transparency, step-by-step
 - **Side A (Sources):** 8 rows; "Volume Tersedia" auto-computed; "Volume Diolah" user-entered
   - `ct_condensate` and `others` rows: user inputs both available and processed volumes
 - **Side B (Uses):** 7 rows; "Kebutuhan" auto-computed; "Dari Alt." and "Dari Recycle" user-entered
+- "Volume Tersedia" and "Kebutuhan" only reflect fixture types with installed quantities entered in Step 2
 - Live "% Terpenuhi" per use row (computed)
 - Live balance status: SEIMBANG / TIDAK SEIMBANG / ERROR
 - **Auto-fill feature (Source):** ⚡ Auto button per row — locks "Diolah" = "Tersedia", reactive to design changes
@@ -223,7 +228,12 @@ A purpose-built web application with built-in formula transparency, step-by-step
 - **Sync toggle:** "Samakan Basah & Kering" — propagates all changes to both scenarios simultaneously
 - Reset button per scenario
 
-### FR-06: Results Dashboard (WAC Scores)
+### FR-06: Browser Draft Persistence & Reset
+- System automatically saves the current AppState to browser localStorage after edits
+- On reload, system restores the latest browser draft automatically
+- Sidebar provides a "Reset Data" action that clears all user-entered data and returns the app to default state
+
+### FR-07: Results Dashboard (WAC Scores)
 - Display: Baseline (computed), Design (from primary), % Savings — all in typology-specific unit
 - WAC P2 status: LULUS whenever `baselineNorm > 0` (data is filled)
 - WAC 1 score (0–8 pts) with progress bar
@@ -232,26 +242,27 @@ A purpose-built web application with built-in formula transparency, step-by-step
 - 8-cell stat grid: total BL, total DSG, reduction, from primary, capture ratio, WAC P2, BL/DSG normalized
 - All normalized values shown to 3 decimal places
 
-### FR-07: Import / Export — JSON
+### FR-08: Import / Export — JSON
 - Export: current AppState → JSON file download (`WAC_{name}_{timestamp}.json`)
 - Import: select `.json` file → validate schema → load state → jump to Step 1
 - Validation errors shown in notification banner with specific error messages
-- Landscape area share must total exactly 100.000% or the import is rejected
+- Landscape area share must total exactly 100,000% or the import is rejected
 - Incomplete imports (missing required fields) rejected with explanation
 
-### FR-08: Notifications
+### FR-09: Notifications
 - Toast notification appears in top-right corner
 - Types: OK (green), Error (red), Warning (amber)
 - Auto-dismiss after 6 seconds; manual close button
 - Multiple messages can stack in a single notification
 
-### FR-09: Sidebar
+### FR-10: Sidebar
 - Always visible on desktop (230px fixed)
 - Hamburger menu on mobile/tablet → overlay drawer
 - Shows: project name, step navigation, live WAC score summary, import/export buttons
+- Shows: Reset Data action for clearing all user-entered fields
 - Step navigation: clicking any step jumps directly to it
 
-### FR-10: Responsiveness
+### FR-11: Responsiveness
 - Desktop (≥ 1024px): full sidebar, 2-col fixture layout
 - Tablet (640–1023px): hamburger drawer + step tab bar below topbar
 - Mobile (< 640px): hamburger drawer + dot progress indicators, all layouts single-column
@@ -266,13 +277,13 @@ A purpose-built web application with built-in formula transparency, step-by-step
 - Bundle size: < 500KB gzipped total
 
 ### NFR-02: Accuracy
-- All WAC scores must match the official GREENSHIP Excel calculator to within 0.001 L/day
+- All WAC scores must match the official GREENSHIP Excel calculator to within 0,001 L/day
 - Numeric precision: 3 decimal places displayed; JavaScript float arithmetic (64-bit IEEE 754)
 - No rounding errors in intermediate steps — all intermediate values preserved as full floats
 
 ### NFR-03: Reliability
 - Works fully offline after initial page load (no API dependencies)
-- No data lost on page refresh (localStorage draft persistence — Phase 2)
+- No data lost on page refresh (localStorage draft persistence in current phase)
 - All browser tabs independent (no cross-tab state conflicts)
 
 ### NFR-04: Browser Support
@@ -502,7 +513,7 @@ Scoring is based on percentage savings relative to the **dynamically computed ba
 - Schema version must match `"2.0"`
 - Required fields: `state.building.name`, `state.building.typology`
 - Either `occupant1 > 0` or `nla > 0` must be true
-- Landscape area share sum must equal exactly `100.000%`; otherwise import is rejected
+- Landscape area share sum must equal exactly `100,000%`; otherwise import is rejected
 - Validation errors shown as a list; import rejected on any error
 - On success: state loaded, user redirected to Step 1
 
@@ -519,7 +530,7 @@ Scoring is based on percentage savings relative to the **dynamically computed ba
 | **WAC 2 max points** | 3 points (NB 1.3 criteria) |
 | **Fixture products per type** | Maximum 4 products per fixture type |
 | **Landscape zones** | Maximum 5 zones |
-| **Area share sum** | Must equal exactly 100.000% to avoid calculation error |
+| **Area share sum** | Must equal exactly 100,000% to avoid calculation error |
 | **Urinal auto-timer** | Handled as a behavioral constant (not user-configurable) |
 | **Rainy day % label** | Must read "Persentase Hari Hujan minimal 10 Tahun (%)" per client requirement |
 | **Neraca Air source — flush** | Maps to `wcDsg` ONLY (WC valve+tank) — NOT `flushDsg` (which also includes urinal) |

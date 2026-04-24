@@ -1,4 +1,4 @@
-# GREENSHIP Water Calculator — Technical Documentation
+# GREENSHIP NB v1.3 Kalkulator Air — Technical Documentation
 **Version:** 4.0 | **Standard:** GREENSHIP NB v1.2 | **Last Updated:** April 2026  
 **Pilot Typology:** KANTOR (Office) — Phase 1
 
@@ -30,13 +30,14 @@
 
 ## 1. Project Overview
 
-The **GREENSHIP NB 1.2 Water Calculator** is a fully client-side web application that digitizes the GBC Indonesia water consumption calculation tool for GREENSHIP New Building certification. It replaces the multi-sheet Excel calculator with a responsive, guided 6-step wizard.
+The **GREENSHIP NB v1.3 Kalkulator Air** is a fully client-side web application that digitizes the GBC Indonesia water consumption calculation workflow for GREENSHIP New Building certification. It replaces the multi-sheet Excel calculator with a responsive, guided 6-step wizard.
 
 ### Key Facts
 
 | Item | Detail |
 |---|---|
 | Standard | GREENSHIP NB v1.2 (GBC Indonesia) |
+| App display title | GREENSHIP NB v1.3 Kalkulator Air |
 | WAC credits covered | WAC P2, WAC 1, WAC 2, WAC 5, WAC 6 |
 | Phase 1 typology | KANTOR (Office) |
 | Source Excel | Water Calculator v2.2 (Office), Water Calculator v2.0 (Factory, NB 1.2) |
@@ -44,6 +45,8 @@ The **GREENSHIP NB 1.2 Water Calculator** is a fully client-side web application
 | Technology | React + TypeScript + Vite |
 | Deployment | Netlify (client-side only, no backend) |
 | Number precision | 3 decimal places (step = 0.001) throughout |
+| Number display locale | Indonesian format: comma decimal separator, period thousands separator |
+| Browser persistence | Current AppState auto-saved to localStorage draft |
 
 ---
 
@@ -278,6 +281,8 @@ urinalBL  = urinal_flushes × 4
 
 > **Important (verified):** `wcDsg` (WC valve+tank) and `urinalDsg` are always kept separate. The Neraca Air "Flushing WC" row maps to `wcDsg`, NOT `flushDsg`.
 
+> **Installed-fixture rule:** A fixture type with total quantity `0` is treated as not installed. It contributes `0` to design, baseline, Neraca Air "Tersedia", and Neraca Air "Kebutuhan". If quantity is entered but rate is left blank, the design rate falls back to that fixture's baseline value.
+
 ### 7.3 Tap & Shower Consumption (L/day)
 
 **Minutes of use per day:**
@@ -371,6 +376,8 @@ weightedAvgRate(products) = Σ(qty_i × rate_i) / Σ(qty_i)
 // If no products with qty > 0: returns 0
 // Engine then falls back to baseline rate if wavg returns 0
 ```
+
+The fallback only applies after the fixture type has at least one installed unit. Empty fixture groups remain zero and do not create default baseline demand.
 
 ### 7.8 Total Consumption Summary
 
@@ -484,15 +491,16 @@ Bangunan  Air      & CT      Hujan     Air      WAC
 | NLA | Minimum 250 m² | Red inline error if 0 < NLA < 250; `min={250}` on input |
 | Typology selector | Only `active: true` typologies selectable | Others shown with "(segera hadir)" label |
 | Landscape basRate | Locked at 5 L/m² | Read-only display box; cannot be edited |
-| Landscape areaShare sum | Must total 100.000% | Live color-coded sum indicator (red if off) |
+| Landscape areaShare sum | Must total 100,000% | Live color-coded sum indicator (red if off) |
 | All number inputs | 3 decimal precision | `step={0.001}` on all numeric `<Inp>` components |
 | WAC P2 | Passes when `baselineNorm > 0` | Result step shows "LULUS" as soon as data fills |
 | Rainfall label | "Persentase Hari Hujan minimal 10 Tahun (%)" | Label updated to reflect 10-year minimum |
 | Neraca volumeDiolah | Must not exceed volumeTersedia | Inline warning per row |
 | Neraca pemenuhan | Must not exceed kebutuhan | Inline error + overall balance status |
 | Text inputs | Max 200 chars, HTML/script stripped | Via `sanitize.ts` |
-| JSON import | Version must match `"2.0"`; required fields validated | Error list displayed in notification |
-| JSON import | Schema validated; landscape share must equal exactly 100.000% | Error list displayed; import rejected on mismatch |
+| JSON import | Schema validated; landscape share must equal exactly 100,000% | Error list displayed; import rejected on mismatch |
+| Browser draft | AppState is auto-saved in localStorage | Reload restores the latest browser draft |
+| Reset Data | Clears all user-entered fields | Returns to default state and removes the saved draft |
 
 ---
 
@@ -529,7 +537,7 @@ The **"Samakan Basah & Kering"** toggle at the top of Step 5:
 
 ### Persistence Note
 
-Auto-fill toggle states and the sync toggle are **local session state only** — they are not included in JSON exports. On import, all values are loaded as-is from the file; the user can re-enable Auto-fill if desired.
+Auto-fill toggle states and the sync toggle are **local session state only** — they are not included in JSON exports or browser draft persistence. On import or reload, all values are loaded as-is from the file/draft; the user can re-enable Auto-fill if desired.
 
 ---
 
@@ -605,7 +613,7 @@ Full round-trip fidelity. Schema:
 | Missing `building.typology` | Error; import rejected |
 | Both `occupant1=0` and `nla=0` | Error; import rejected |
 | `nla > 0 && nla < 250` | Allowed in import (constraint shown in UI only) |
-| Landscape areaShare sum ≠ 100.000% | Error listed; import rejected |
+| Landscape areaShare sum ≠ 100,000% | Error listed; import rejected |
 | Values out of range (negative, > max) | Clamped to valid range silently |
 | HTML/script in text fields | Stripped via `sanitize.ts` |
 | File > 5 MB | Rejected with error message |
@@ -657,7 +665,7 @@ export function useBreakpoint() {
 | No backend / no PII | 100% client-side; no API calls, no accounts, no cookies |
 | Input sanitization | `src/utils/sanitize.ts` strips HTML tags, script, `javascript:`, SQL keywords |
 | JSON import validation | Strict schema check before any state update; unknown keys ignored |
-| JSON import validation | Strict schema check; landscape share must equal exactly 100.000%; out-of-range values clamped |
+| JSON import validation | Strict schema check; landscape share must equal exactly 100,000%; out-of-range values clamped |
 | Number bounds | All numeric fields clamped to `[min, max]` via `sanitizeNumber()` |
 | File size limit | Max 5 MB for any import file |
 | Content Security Policy | Set via `netlify.toml` headers |
@@ -918,3 +926,4 @@ The SNI standard baseline for landscape irrigation is fixed at **5 L/m² per irr
 | 2.1 | 2026-03 | Import/export module introduced, responsive layout, PctInp, 3-decimal precision |
 | 3.0 | 2026-04 | Factory removed from active UI; Neraca Air restored to NB 2.0 structure; wcRecyclePct/showerRecyclePct moved to Neraca Air table; PLANNING updated |
 | 4.0 | 2026-04 | Flush formula bug fix (wcDsg vs flushDsg); WAC P2 always-pass logic; SVG favicon; NLA min 250 constraint; landscape baseline locked; rainfall label updated; Auto-fill toggles; Sync Wet↔Dry toggle; PRD created |
+| 4.1 | 2026-04 | App title updated to GREENSHIP NB v1.3; missing fixture types treated as not installed; Indonesian display formatting; browser draft persistence; global Reset Data action |

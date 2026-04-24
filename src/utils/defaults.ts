@@ -19,32 +19,36 @@ export const mkWBScenario = (): WBScenario => ({
   uses:    WB_USE_IDS.map(id   => ({ id, dariAlt: 0, dariRecycle: 0 })),
 });
 
-export const DEFAULT_STATE: AppState = {
-  building: {
-    name: '',
-    typology: 'KANTOR',
-    nla: 0,
-    occupant1: 0,
-    occupant2: 0,
-    opHours: 8,
-  },
-  fixtures: mkFixtureGroup(),
-  hasUrinal: true,
-  landscape: {
-    area: 0,
-    zones: [{ label: 'Area 1', basRate: LANDSCAPE_BASELINE_RATE, dsgRate: 0, areaShare: 1 }],
-  },
-  coolingTower: { enabled: false, load: 0 },
-  rainwater: {
-    hasTank: false,
-    rainyDayPct: 0.55,
-    tankCapacity: 0,
-    avgRainfall: 50,
-    runoffCoef: 0.78,
-    roofArea: 0,
-  },
-  waterBalance: {
-    wet: mkWBScenario(),
-    dry: mkWBScenario(),
-  },
-};
+export function createDefaultState(): AppState {
+  return {
+    building: {
+      name: '',
+      typology: 'KANTOR',
+      nla: 0,
+      occupant1: 0,
+      occupant2: 0,
+      opHours: 8,
+    },
+    fixtures: mkFixtureGroup(),
+    hasUrinal: true,
+    landscape: {
+      area: 0,
+      zones: [{ label: 'Area 1', basRate: LANDSCAPE_BASELINE_RATE, dsgRate: 0, areaShare: 1 }],
+    },
+    coolingTower: { enabled: false, load: 0 },
+    rainwater: {
+      hasTank: false,
+      rainyDayPct: 0.55,
+      tankCapacity: 0,
+      avgRainfall: 50,
+      runoffCoef: 0.78,
+      roofArea: 0,
+    },
+    waterBalance: {
+      wet: mkWBScenario(),
+      dry: mkWBScenario(),
+    },
+  };
+}
+
+export const DEFAULT_STATE: AppState = createDefaultState();
