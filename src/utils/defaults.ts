@@ -15,8 +15,8 @@ export const mkFixtureGroup = (): FixtureGroup => ({
 });
 
 export const mkWBScenario = (): WBScenario => ({
-  sources: WB_SOURCE_IDS.map(id => ({ id, availableManual: 0, volumeDiolah: 0 })),
-  uses:    WB_USE_IDS.map(id   => ({ id, dariAlt: 0, dariRecycle: 0 })),
+  sources: WB_SOURCE_IDS.map(id => ({ id, auto: true, availableManual: 0, volumeDiolah: 0 })),
+  uses:    WB_USE_IDS.map(id   => ({ id, auto: true, dariAlt: 0, dariRecycle: 0 })),
 });
 
 export function createDefaultState(): AppState {
@@ -35,7 +35,7 @@ export function createDefaultState(): AppState {
       area: 0,
       zones: [{ label: 'Area 1', basRate: LANDSCAPE_BASELINE_RATE, dsgRate: 0, areaShare: 1 }],
     },
-    coolingTower: { enabled: false, load: 0 },
+    coolingTower: { enabled: false, load: 0, coc: 3 },
     rainwater: {
       hasTank: false,
       rainyDayPct: 0.55,

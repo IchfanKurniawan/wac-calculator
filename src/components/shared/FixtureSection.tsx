@@ -1,9 +1,9 @@
-import React from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import type { FixtureProduct, FixtureTypeId } from '../../types';
 import { FIXTURE_BASELINES } from '../../constants/baselines';
 import { mkProd } from '../../utils/defaults';
-import { Inp, C } from './atoms';
+import { Inp, Badge, IconGhost, NumField } from './atoms';
+import { C } from './tokens';
 
 interface Props {
   type: FixtureTypeId;
@@ -21,73 +21,89 @@ export function FixtureSection({ type, products, onChange }: Props) {
     next[i] = { ...next[i], [field]: val };
     onChange(next);
   };
+  
+  const handleNameChange = (i: number, e: React.ChangeEvent<HTMLInputElement>) => upd(i, 'name', e.target.value);
 
   return (
-    <div style={{ marginBottom: 18 }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: C.s700 }}>{label}</span>
-          <span style={{
-            fontSize: 11, color: C.s500, background: C.s100,
-            padding: '2px 8px', borderRadius: 20,
-          }}>
-            Baseline ≤ {baseline} {unit}
-          </span>
+    <section style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+          <strong style={{ fontFamily: 'var(--sans)', fontSize: 14, color: C.heading }}>{label}</strong>
+          <Badge variant="info" size="sm">Baseline ≤ {baseline} {unit}</Badge>
         </div>
         {products.length < 4 && (
-          <button
-            onClick={add}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 4,
-              fontSize: 12, color: C.teal, background: 'none', border: 'none', cursor: 'pointer',
-            }}
-          >
-            <Plus size={11} /> Tambah
+          <button type="button" onClick={add} style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '6px 12px', borderRadius: 8,
+            background: 'transparent', border: `1.5px solid ${C.heading}`,
+            color: C.heading, fontFamily: 'var(--sans)', fontSize: 13, fontWeight: 600,
+            cursor: 'pointer', transition: 'background 0.15s, color 0.15s',
+          }} onMouseEnter={(e)=>{e.currentTarget.style.background=C.lighter}} onMouseLeave={(e)=>{e.currentTarget.style.background='transparent'}}>
+            <Plus size={12} /> Tambah
           </button>
         )}
       </div>
 
-      {/* Column headers */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 72px 110px 90px', gap: 5, marginBottom: 4 }}>
-        {['Nama Produk', 'Jumlah', `Desain (${unit})`, 'Status'].map(h => (
-          <div key={h} style={{ fontSize: 10, color: C.s300 }}>{h}</div>
-        ))}
-      </div>
+      <div style={{ border: `1px solid ${C.line}`, borderRadius: 8, overflow: 'hidden' }}>
+        {/* Header */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 120px 80px', gap: 8, padding: '10px 12px', background: C.lighter, borderBottom: `1px solid ${C.line}`, fontSize: 12, fontWeight: 600, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: 'var(--sans)' }}>
+          <div>Nama Produk</div>
+          <div style={{ textAlign: 'center' }}>Jumlah</div>
+          <div style={{ textAlign: 'center' }}>Desain ({unit})</div>
+          <div>Status</div>
+        </div>
 
-      {/* Product rows */}
-      {products.map((p, i) => {
-        const isHemat = p.rate > 0 && p.rate <= baseline;
-        return (
-          <div
-            key={i}
-            style={{ display: 'grid', gridTemplateColumns: '1fr 72px 110px 90px', gap: 5, marginBottom: 5, alignItems: 'center' }}
-          >
-            <Inp type="text" value={p.name} onChange={v => upd(i, 'name', v)} placeholder={`Produk ${i + 1}`} />
-            <Inp value={p.qty || ''} onChange={v => upd(i, 'qty', v)} step={1} />
-            <Inp value={p.rate || ''} onChange={v => upd(i, 'rate', v)} step={0.001} />
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              {p.rate > 0 && (
-                <span style={{
-                  fontSize: 10, padding: '2px 7px', borderRadius: 20, fontWeight: 700,
-                  background: isHemat ? '#DCFCE7' : '#FEF2F2',
-                  color: isHemat ? '#15803D' : '#DC2626',
-                }}>
-                  {isHemat ? '✓ Hemat' : '✗ Boros'}
-                </span>
-              )}
-              {i > 0 && (
-                <button
-                  onClick={() => del(i)}
-                  style={{ color: C.s300, background: 'none', border: 'none', cursor: 'pointer', padding: 2 }}
-                >
-                  <Trash2 size={11} />
-                </button>
-              )}
+        {/* Rows */}
+        {products.map((p, i) => {
+          const isHemat = p.rate > 0 && p.rate <= baseline;
+          return (
+            <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 80px 120px 80px', gap: 8, padding: '8px 12px', alignItems: 'center', borderBottom: i < products.length - 1 ? `1px solid ${C.line}` : 'none', background: '#fff' }}>
+              <Inp
+                type="text"
+                value={p.name}
+                onChange={(e) => handleNameChange(i, e)}
+                placeholder={`Produk ${i + 1}`}
+                style={{ fontSize: 13 }}
+              />
+              <NumField
+                value={p.qty}
+                onChange={(v) => upd(i, 'qty', v)}
+                min={0}
+                max={1000000}
+                integer
+                style={{ fontSize: 13 }}
+                aria-label={`Jumlah ${label} produk ${i + 1}`}
+              />
+              <NumField
+                value={p.rate}
+                onChange={(v) => upd(i, 'rate', v)}
+                min={0}
+                max={100000}
+                style={{ fontSize: 13 }}
+                aria-label={`Laju desain ${label} produk ${i + 1}`}
+              />
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
+                {p.rate > 0 && (
+                  <Badge variant={isHemat ? 'success' : 'danger'} size="sm">
+                    {isHemat ? '✓ Hemat' : '✕ Boros'}
+                  </Badge>
+                )}
+                {i > 0 && (
+                  <IconGhost onClick={() => del(i)} aria-label={`Hapus produk ${i + 1}`}>
+                    <Trash2 size={12} />
+                  </IconGhost>
+                )}
+              </div>
             </div>
+          );
+        })}
+
+        {products.length === 0 && (
+          <div style={{ padding: '20px 12px', textAlign: 'center', color: C.muted, fontSize: 13 }}>
+            Belum ada produk. Klik "Tambah" untuk menambahkan.
           </div>
-        );
-      })}
-    </div>
+        )}
+      </div>
+    </section>
   );
 }

@@ -23,6 +23,13 @@ import type {
 import { FIXTURE_BASELINES } from '../constants/baselines';
 import { TYPOLOGY_CONFIG } from '../constants/typologies';
 import { LANDSCAPE_BASELINE_RATE } from '../constants/landscape';
+import {
+  CT_BASELINE_COC,
+  CT_MAX_COC,
+  CT_MIN_COC,
+  MIN_RAINWATER_CAP_RATIO,
+  wac1PointsForRatio,
+} from '../constants/scoring';
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
 
@@ -71,17 +78,19 @@ function calcFlush(state: AppState) {
   const tc = TYPOLOGY_CONFIG[state.building.typology];
   const occ = state.building.occupant1 || 0;
   const { fixtures, hasUrinal } = state;
+  const urinalQty = totalQty(fixtures.URINAL);
+  // The toggle alone is not enough: flushing maths may only assume urinals when units exist.
+  const urinalsInstalled = hasUrinal && urinalQty > 0;
 
   // Daily flush counts — formula from WAC v2.2 sheet L12/L19
-  const wcFlushesPerDay = hasUrinal
+  const wcFlushesPerDay = urinalsInstalled
     ? occ * (tc.malePct * tc.wcMale + tc.femalePct * tc.wcFemale)
     : occ * tc.wcNoUrinal;
-  const urinalFlushesPerDay = hasUrinal ? occ * tc.malePct * tc.urinalUses : 0;
+  const urinalFlushesPerDay = urinalsInstalled ? occ * tc.malePct * tc.urinalUses : 0;
 
   // Valve / Tank split by product quantities
   const valveQty = totalQty(fixtures.WC_FLUSH_VALVE);
   const tankQty  = totalQty(fixtures.WC_FLUSH_TANK);
-  const urinalQty = totalQty(fixtures.URINAL);
   const wcQty    = valveQty + tankQty;
   const vSh = wcQty > 0 ? valveQty / wcQty : 0;
   const tSh = wcQty > 0 ? 1 - vSh : 0;
@@ -92,11 +101,11 @@ function calcFlush(state: AppState) {
 
   const vDsg = installedRateOrZero(fixtures.WC_FLUSH_VALVE, vBl);
   const tDsg = installedRateOrZero(fixtures.WC_FLUSH_TANK, tBl);
-  const uDsg = hasUrinal && urinalQty > 0 ? weightedAvgRate(fixtures.URINAL) || uBl : 0;
+  const uDsg = urinalsInstalled ? weightedAvgRate(fixtures.URINAL) || uBl : 0;
 
   const wcBL  = wcFlushesPerDay * (vSh * vBl  + tSh * tBl);
   const wcDsg = wcFlushesPerDay * (vSh * vDsg + tSh * tDsg);
-  const urinalBL  = hasUrinal && urinalQty > 0 ? urinalFlushesPerDay * uBl : 0;
+  const urinalBL  = urinalsInstalled ? urinalFlushesPerDay * uBl : 0;
   const urinalDsg = urinalFlushesPerDay * uDsg;
 
   return {
@@ -178,9 +187,15 @@ function calcLandscape(state: AppState) {
 function calcCT(state: AppState) {
   const ct = state.coolingTower;
   if (!ct.enabled || !ct.load) return { ctBL: 0, ctDsg: 0 };
-  // Formula: (TR × 3) × 0.01 × 3.78541 × 60 × opHours
-  const val = ct.load * 3 * 0.01 * 3.78541 * 60 * state.building.opHours;
-  return { ctBL: val, ctDsg: val };
+  // Workbook baseline: (TR × 3) × 0.01 × 3.78541 × 60 × opHours.
+  // That figure already includes blowdown at the baseline 3 cycles of concentration.
+  const baselineMakeup = ct.load * 3 * 0.01 * 3.78541 * 60 * state.building.opHours;
+  // Make-up = evaporation + blowdown, blowdown = evaporation / (COC − 1).
+  // Scale by the blowdown share so COC = 3 reproduces the workbook value exactly.
+  const coc = Math.max(CT_MIN_COC, Math.min(CT_MAX_COC, ct.coc || CT_BASELINE_COC));
+  const blowdownFactor = (cycles: number) =>
+    (1 + 1 / (cycles - 1)) / (1 + 1 / (CT_BASELINE_COC - 1));
+  return { ctBL: baselineMakeup, ctDsg: baselineMakeup * blowdownFactor(coc) };
 }
 
 // ─── Rainwater Harvesting ─────────────────────────────────────────────────────
@@ -220,30 +235,31 @@ export function calcWAC1(
   nla: number,
   opHours: number,
   typologyId: string,
+  rainwaterCapRatio = 0,
+  hasRainwaterTank = false,
 ): WAC1Result {
   const tc = TYPOLOGY_CONFIG[typologyId as keyof typeof TYPOLOGY_CONFIG];
-  if (!tc) return { baselineNorm: 0, designNorm: 0, ratio: 1, savingsPct: 0, p2Pass: false, pts: 0 };
+  if (!tc) {
+    return {
+      baselineNorm: 0, designNorm: 0, ratio: 1, savingsPct: 0,
+      p2Pass: false, p2DataComplete: false, pts: 0,
+    };
+  }
 
   const baselineNorm = tc.normFn(baselineTotal, occupant1, nla, opHours);
   const designNorm   = tc.normFn(designFromPrimary, occupant1, nla, opHours);
   const ratio        = baselineNorm > 0 ? designNorm / baselineNorm : 1;
   const savingsPct   = 1 - ratio;
-  // WAC P2: passes as long as user has filled data (baseline computed)
-  // Scoring from ratio is for WAC 1 points only
-  const p2Pass       = baselineNorm > 0;
 
-  const pts = !p2Pass ? 0
-    : ratio <= 0.45 ? 8
-    : ratio <= 0.50 ? 7
-    : ratio <= 0.55 ? 6
-    : ratio <= 0.60 ? 5
-    : ratio <= 0.65 ? 4
-    : ratio <= 0.70 ? 3
-    : ratio <= 0.75 ? 2
-    : ratio <= 0.80 ? 1
-    : 0;
+  // Enough data to evaluate WAC 1 / P2 at all?
+  const p2DataComplete = baselineNorm > 0;
+  // WAC P2 is a rainwater prerequisite, not a "data entered" flag.
+  const p2Pass = p2DataComplete && hasRainwaterTank && rainwaterCapRatio + 1e-9 >= MIN_RAINWATER_CAP_RATIO;
 
-  return { baselineNorm, designNorm, ratio, savingsPct, p2Pass, pts };
+  // WAC 1 points come from the ratio ladder; the P2 prerequisite is reported separately.
+  const pts = p2DataComplete ? wac1PointsForRatio(ratio) : 0;
+
+  return { baselineNorm, designNorm, ratio, savingsPct, p2Pass, p2DataComplete, pts };
 }
 
 // ─── Master Calculator ────────────────────────────────────────────────────────
@@ -275,7 +291,16 @@ export function calcAll(state: AppState): CalcResults {
   };
 
   const wac2 = calcWAC2(state.fixtures);
-  const wac1 = calcWAC1(totalBL, totalFromPrimary, building.occupant1, building.nla, building.opHours, building.typology);
+  const wac1 = calcWAC1(
+    totalBL,
+    totalFromPrimary,
+    building.occupant1,
+    building.nla,
+    building.opHours,
+    building.typology,
+    rw.capRatio,
+    state.rainwater.hasTank,
+  );
 
   return { daily, wac2, wac1, rainwater: rw, unit: tc.resultUnit };
 }

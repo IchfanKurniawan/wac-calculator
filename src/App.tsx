@@ -1,1194 +1,2135 @@
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
   Building2, Droplets, Leaf, CloudRain, Scale,
   BarChart3, ChevronRight, ChevronLeft, Award,
   Download, Upload, AlertCircle, CheckCircle2, X,
-  Plus, Trash2, Menu, Link2, Zap,
+  Plus, Trash2, Menu, Link2, Zap, AlertTriangle,
 } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+// Charts are only used on the results step — keep recharts out of the first paint.
+const WacComparisonChart = React.lazy(() => import('./components/shared/WacComparisonChart'));
 
-import type { AppState, FixtureTypeId, WBSourceId, WBUseId } from './types';
+import type {
+  AppState, FixtureTypeId, TypologyId, WBSourceId, WBUseId,
+  BuildingData, FixtureGroup, FixtureProduct, LandscapeZone,
+} from './types';
 import { WB_SOURCE_IDS, WB_USE_IDS } from './types';
 import { TYPOLOGY_CONFIG } from './constants/typologies';
-import { FIXTURE_AVAILABILITY } from './constants/baselines';
+import { FIXTURE_BASELINES, FIXTURE_AVAILABILITY } from './constants/baselines';
 import {
-  isLandscapeShareExact,
-  LANDSCAPE_BASELINE_RATE,
-  LANDSCAPE_MAX_ZONES,
-  landscapeSharePct,
+  LANDSCAPE_BASELINE_RATE, LANDSCAPE_MAX_ZONES,
+  landscapeShareSum, landscapeSharePct, isLandscapeShareExact,
 } from './constants/landscape';
 import {
   calcAll, calcWAC2,
   calcRainwater, computeSourceAvailable, computeUseRequired,
 } from './engine/calculations';
 import { downloadJSON, pickJSONFile, parseAndValidate } from './utils/importExport';
-import { createDefaultState, mkWBScenario } from './utils/defaults';
+import { createDefaultState, mkFixtureGroup, mkProd, mkWBScenario } from './utils/defaults';
 import {
-  C, fmt, fmtFixed, fmtPct, useBreakpoint,
-  Label, Inp, Sel, Card, SecTitle, Pill, Tog, PctInp,
+  fmt, fmtFixed, fmtPct,
+  Label, Inp, Sel, Card, SecTitle, Pill, Tog, PctInp, Button, Badge, Table, Th, Td, Tr, Thead, Tbody, Progress, AutoPill, ReadOnly, IconGhost,
+  eyebrowStyle,
+  // Phase 2 new atoms
+  NumberControl, NumField, SegmentedControl, RadioCard, DetailCard, MeasureTrack,
 } from './components/shared/atoms';
+import { C } from './components/shared/tokens';
 import { FixtureSection } from './components/shared/FixtureSection';
+import { AppShell } from './components/layout/AppShell';
+// ProjectToolbar removed - single project mode
+import { collectIssues } from './engine/validation';
+import type { ValidationIssue } from './engine/validation';
+import { buildWhatIf } from './engine/whatIf';
+// Single project mode - no project management
 
-// ─── Steps ───────────────────────────────────────────────────────────────────
-const STEPS = [
-  { id:1, label:'Data Bangunan',     short:'Bangunan', icon:Building2 },
-  { id:2, label:'Fitur Air (WAC 2)', short:'WF',       icon:Droplets  },
-  { id:3, label:'Lansekap & CT',     short:'Lansekap', icon:Leaf      },
-  { id:4, label:'Air Hujan (WAC 6)', short:'Hujan',    icon:CloudRain },
-  { id:5, label:'Neraca Air',        short:'Neraca',   icon:Scale     },
-  { id:6, label:'Hasil WAC',         short:'Hasil',    icon:BarChart3 },
+// ─── Breakpoint Hook ───
+function useBreakpoint() {
+  const [width, setWidth] = useState(() => typeof window !== 'undefined' ? window.innerWidth : 1280);
+  useEffect(() => {
+    const onResize = () => setWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return {
+    isMobile: width < 640,
+    isTablet: width >= 640 && width < 1024,
+    isDesktop: width >= 1024,
+  };
+}
+
+// ─── Step Definitions ───
+export const STEPS = [
+  { id: 1, label: 'Data Bangunan', short: 'Data', icon: Building2 },
+  { id: 2, label: 'Fitur Air (WAC 2)', short: 'Fitur', icon: Droplets },
+  { id: 3, label: 'Lansekap & CT', short: 'Lansekap', icon: Leaf },
+  { id: 4, label: 'Air Hujan', short: 'Hujan', icon: CloudRain },
+  { id: 5, label: 'Neraca Air', short: 'Neraca', icon: Scale },
+  { id: 6, label: 'Hasil WAC', short: 'Hasil', icon: BarChart3 },
 ];
 
-// ─── Notification ─────────────────────────────────────────────────────────────
-function Notif({ type, msgs, onClose }:{ type:'ok'|'err'|'warn'; msgs:string[]; onClose:()=>void }) {
-  const map = {
-    ok:   { bg:'#F0FDF4', border:'#86EFAC', text:'#15803D', Icon:CheckCircle2 },
-    err:  { bg:'#FEF2F2', border:'#FCA5A5', text:C.red,     Icon:AlertCircle  },
-    warn: { bg:'#FFF7ED', border:'#FCD34D', text:'#D97706', Icon:AlertCircle  },
-  }[type];
+// ─── Helper Components ───
+function StatusChip({ label, good }: { label: string; good: boolean }) {
   return (
-    <div style={{ position:'fixed', top:16, right:16, zIndex:9999, maxWidth:420,
-      background:map.bg, border:`1px solid ${map.border}`, borderRadius:10,
-      padding:'12px 16px', boxShadow:'0 4px 20px rgba(0,0,0,0.12)' }}>
-      <div style={{ display:'flex', alignItems:'flex-start', gap:10 }}>
-        <map.Icon size={16} style={{ color:map.text, flexShrink:0, marginTop:2 }}/>
-        <div style={{ flex:1 }}>
-          {msgs.map((m,i)=><div key={i} style={{ fontSize:13, color:map.text, marginBottom:i<msgs.length-1?4:0 }}>{m}</div>)}
-        </div>
-        <button onClick={onClose} style={{ color:C.s400, background:'none', border:'none', cursor:'pointer', padding:0 }}><X size={14}/></button>
+    <span style={{
+      fontSize: 11,
+      fontWeight: 700,
+      padding: '2px 8px',
+      borderRadius: 20,
+      background: good ? C.successBg : C.dangerBg,
+      color: good ? C.successInk : C.dangerInk,
+      border: `1px solid ${good ? C.successLine : C.dangerLine}`,
+    }}>
+      {good ? '✓ ' : '✕ '}{label}
+    </span>
+  );
+}
+
+// Replacement components using DetailCard (from atoms)
+function StepCard({ children, className, style }: { children: React.ReactNode; className?: string; style?: React.CSSProperties }) {
+  return <DetailCard title="" footer={null} className={className} style={{ ...style, border: `1px solid ${C.line}`, borderRadius: 12, boxShadow: '0 2px 6px rgba(17,17,17,0.12)', overflow: 'hidden' }}>{children}</DetailCard>;
+}
+
+function StepCardHeader({ title, icon, subtitle }: { title: string; icon?: React.ReactNode; subtitle?: string }) {
+  return (
+    <div style={{ padding: '18px 20px 12px', borderBottom: `1px solid ${C.line}` }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+        {icon && <span style={{ display: 'flex', color: C.heading }}>{icon}</span>}
+        <div style={{ fontFamily: 'var(--display)', fontSize: 20, fontWeight: 600, lineHeight: 1.4, color: C.heading }}>{title}</div>
       </div>
+      {subtitle && <div style={{ marginTop: 4, fontSize: 13, color: C.muted }}>{subtitle}</div>}
     </div>
   );
 }
 
-// ─── Step 1 — Data Bangunan ───────────────────────────────────────────────────
-function Step1({ state, set }:{ state:AppState; set:(s:AppState)=>void }) {
-  const tc = TYPOLOGY_CONFIG[state.building.typology];
-  const { isMobile } = useBreakpoint();
-  const upd = (k:keyof AppState['building'], v:string|number) =>
-    set({ ...state, building:{ ...state.building, [k]:v } });
+function StepCardBody({ children, className, style }: { children: React.ReactNode; className?: string; style?: React.CSSProperties }) {
+  return <div className={className} style={{ padding: '18px 20px 22px', ...style }}>{children}</div>;
+}
 
-  // NLA validation — minimum 250 sqm
-  const nlaError = state.building.nla > 0 && state.building.nla < 250
-    ? 'NLA minimal 250 m² (sesuai batasan kalkulator)'
-    : null;
+// ─── Step 1: Data Bangunan ───
+function Step1({ state, set }: { state: AppState; set: React.Dispatch<React.SetStateAction<AppState>> }) {
+  const updateBuilding = (field: keyof BuildingData, val: string | number) =>
+    set(s => ({ ...s, building: { ...s.building, [field]: val } }));
+
+  const tc = TYPOLOGY_CONFIG[state.building.typology];
+  const isNameValid = state.building.name.trim().length > 0;
+  const hasOccupants = (state.building.occupant1 || 0) + (state.building.occupant2 || 0) > 0;
+  const hasNLA = (state.building.nla || 0) > 0;
 
   return (
-    <div style={{ maxWidth:640, margin:'0 auto', display:'grid', gap:16 }}>
-      <Card>
-        <SecTitle icon={Building2}>Data Dasar Bangunan</SecTitle>
-        <div style={{ display:'grid', gap:14 }}>
+    <div style={{ maxWidth: 760 }}>
+      <DetailCard
+        title="Identitas Proyek"
+        icon={<Building2 size={20} />}
+        style={{ marginBottom: 16 }}
+      >
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
           <div>
-            <Label>Nama Bangunan / Proyek</Label>
-            <Inp type="text" value={state.building.name} onChange={v=>upd('name',v)} placeholder="Contoh: Gedung Kantor A"/>
+            <Label>Nama Bangunan <span style={{color: C.danger}}>*</span></Label>
+            <Inp
+              value={state.building.name}
+              onChange={e => updateBuilding('name', e.target.value)}
+              placeholder="Contoh: Gedung Menara Kuningan"
+              aria-invalid={!isNameValid}
+              aria-describedby={!isNameValid ? 'building-name-error' : undefined}
+              style={{ borderColor: !isNameValid ? C.danger : undefined }}
+            />
+            {!isNameValid && (
+              <span id="building-name-error" style={{ fontSize: 12, color: C.danger, marginTop: 4, display: 'block' }}>
+                Nama bangunan wajib diisi
+              </span>
+            )}
           </div>
           <div>
-            <Label>Tipologi Bangunan</Label>
-            <Sel value={state.building.typology}
-              onChange={v=>{
-                const fresh = createDefaultState();
-                set({ ...fresh, building:{ ...fresh.building, typology:v as AppState['building']['typology'], name:state.building.name } });
+            <Label>Tipologi</Label>
+            <Sel
+              value={state.building.typology}
+              onChange={e => updateBuilding('typology', e.target.value as TypologyId)}
+              options={[{ value: state.building.typology, label: tc.label }]}
+              disabled
+            />
+            <span style={{ fontSize: 12, color: C.muted, display: 'block', marginTop: 4 }}>
+              Tipologi ditentukan via tombol skema di Header
+            </span>
+          </div>
+        </div>
+      </DetailCard>
+
+      <DetailCard
+        title="Parameter Utama"
+        icon={<Droplets size={20} />}
+        subtitle={`Tipologi: ${tc.label} | Satuan: ${tc.occupant1Label} / ${tc.occupant2Label}`}
+      >
+        <div style={{ display: 'grid', gap: 16 }}>
+          <div>
+            <Label unit={`(${tc.occupant1Label})`}>Jumlah Penghuni Utama <span style={{color: C.danger}}>*</span></Label>
+            <NumField
+              value={state.building.occupant1 || 0}
+              onChange={v => updateBuilding('occupant1', v)}
+              min={0}
+              max={100000}
+              step={1}
+              integer
+              aria-label="Jumlah penghuni utama"
+              aria-invalid={!hasOccupants}
+              style={{ borderColor: !hasOccupants ? C.danger : undefined }}
+            />
+            {!hasOccupants && !hasNLA && (
+              <span style={{ fontSize: 12, color: C.danger, marginTop: 4, display: 'block' }}>
+                Minimal salah satu: penghuni atau NLA wajib diisi
+              </span>
+            )}
+          </div>
+          <div>
+            <Label unit={`(${tc.occupant2Label})`}>Jumlah Penghuni Sekunder</Label>
+            <NumField
+              value={state.building.occupant2 || 0}
+              onChange={v => updateBuilding('occupant2', v)}
+              min={0}
+              max={100000}
+              step={1}
+              integer
+              aria-label="Jumlah penghuni sekunder"
+            />
+          </div>
+          <div>
+            <Label>Luas Lantai Nett (m²) <span style={{color: C.danger}}>*</span></Label>
+            <NumField
+              value={state.building.nla || 0}
+              onChange={v => updateBuilding('nla', v)}
+              min={0}
+              max={1000000}
+              step={0.001}
+              aria-label="Luas lantai nett"
+              aria-invalid={!hasNLA}
+              style={{ borderColor: !hasNLA ? C.danger : undefined }}
+            />
+            {!hasNLA && !hasOccupants && (
+              <span style={{ fontSize: 12, color: C.danger, marginTop: 4, display: 'block' }}>
+                Minimal salah satu: penghuni atau NLA wajib diisi
+              </span>
+            )}
+          </div>
+          <div>
+            <Label>Jam Operasional/hari</Label>
+            <NumField
+              value={state.building.opHours || 8}
+              onChange={v => updateBuilding('opHours', v)}
+              min={1}
+              max={24}
+              step={0.5}
+              aria-label="Jam operasional per hari"
+            />
+          </div>
+        </div>
+      </DetailCard>
+    </div>
+  );
+}
+
+// ─── Step 2: Fitur Air (WAC 2) ───
+function Step2({ state, set }: { state: AppState; set: React.Dispatch<React.SetStateAction<AppState>> }) {
+  const updateFixtures = (type: FixtureTypeId, products: FixtureProduct[]) =>
+    set(s => ({ ...s, fixtures: { ...s.fixtures, [type]: products } }));
+
+  const toggleUrinal = () => set(s => ({ ...s, hasUrinal: !s.hasUrinal }));
+
+  const wac2Live = calcWAC2(state.fixtures);
+  const urinalQty = state.fixtures.URINAL.reduce((sum, p) => sum + (p.qty || 0), 0);
+  const urinalConflict = state.hasUrinal !== urinalQty > 0;
+
+  // Get available fixtures for current typology
+  const availableFixtures = FIXTURE_AVAILABILITY[state.building.typology] || [];
+  
+  // Track open accordions
+  const [openAccordions, setOpenAccordions] = useState<Set<FixtureTypeId>>(
+    new Set(availableFixtures.filter(t => state.fixtures[t].length > 0))
+  );
+
+  const toggleAccordion = (type: FixtureTypeId) => {
+    setOpenAccordions(prev => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
+  };
+
+  const isOpen = (type: FixtureTypeId) => openAccordions.has(type);
+
+  const getFixtureStatus = (type: FixtureTypeId) => {
+    const products = state.fixtures[type];
+    const total = products.reduce((s, p) => s + (p.qty || 0), 0);
+    const bl = FIXTURE_BASELINES[type]?.baseline ?? 0;
+    const hemat = products.reduce((s, p) => s + ((p.qty > 0 && p.rate > 0 && p.rate <= bl) ? p.qty : 0), 0);
+    if (total === 0) return { label: 'Belum diisi', color: C.muted };
+    if (hemat === total) return { label: 'Semua Hemat', color: C.success };
+    return { label: 'Ada Boros', color: C.danger };
+  };
+
+  return (
+    <div style={{ maxWidth: 900 }}>
+      {/* Skor WAC 2 - Live Score Panel */}
+      <DetailCard
+        title="Skor WAC 2"
+        icon={<Award size={20} />}
+        subtitle={`Poin maksimum: 3 | Target: ≥25% (1 poin), ≥50% (2 poin), ≥75% (3 poin)`}
+        style={{ marginBottom: 16 }}
+      >
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 16 }}>
+          <Pill val={fmtFixed(wac2Live.pts, 0)} label="Skor WAC 2" unit="/3" accent={C.accent} />
+          <Pill val={fmt(wac2Live.pct * 100, 1)} label="Persentase Hemat" unit="%" accent={C.accent} />
+          <Pill val={fmtFixed(wac2Live.hemat, 0)} label="Produk Hemat" accent={C.heading} />
+          <Pill val={fmtFixed(wac2Live.total, 0)} label="Total Produk" accent={C.heading} />
+        </div>
+      </DetailCard>
+
+      {availableFixtures.map(type => {
+        const baseline = FIXTURE_BASELINES[type];
+        const products = state.fixtures[type];
+        const total = products.reduce((s, p) => s + (p.qty || 0), 0);
+        const status = getFixtureStatus(type);
+        const open = isOpen(type);
+
+        return (
+          <DetailCard key={type} title={baseline?.labelId || type} style={{ marginBottom: 12 }}>
+            <div
+              style={{
+                padding: '14px 20px',
+                background: open ? C.lighter : 'transparent',
+                borderBottom: `1px solid ${C.line}`,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
               }}
-              options={Object.entries(TYPOLOGY_CONFIG).map(([k,v])=>({
-                value:k, disabled:!v.active,
-                label:v.label+(v.note?` — ${v.note}`:'')+(!v.active?' (segera hadir)':''),
-              }))}/>
-            {tc.note && <div style={{ fontSize:11, color:C.amber, marginTop:4 }}>⚠ {tc.note}</div>}
+              onClick={() => toggleAccordion(type)}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
+                <span style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: 28,
+                  height: 28,
+                  borderRadius: 6,
+                  background: open ? C.brand : C.line,
+                  color: open ? '#fff' : C.muted,
+                  fontSize: 14,
+                  fontWeight: 600,
+                  transition: 'all 0.15s',
+                }}>
+                  {open ? '−' : '+'}
+                </span>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 15, color: C.heading }}>
+                    {baseline?.labelId || type}
+                  </div>
+                  <div style={{ fontSize: 12, color: C.muted }}>
+                    Baseline: {baseline?.baseline ?? 0} {baseline?.unit || 'L'}
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  padding: '2px 8px',
+                  borderRadius: 20,
+                  background: status.color + '15',
+                  color: status.color,
+                  border: `1px solid ${status.color}40`,
+                }}>
+                  {status.label}
+                </span>
+                <span style={{
+                  fontFamily: 'var(--display)',
+                  fontSize: 18,
+                  fontWeight: 700,
+                  color: C.heading,
+                }}>
+                  {total}
+                </span>
+                <span style={{ fontSize: 13, color: C.muted }}>unit</span>
+              </div>
+            </div>
+
+            {open && (
+              <div style={{ padding: '16px 20px 20px' }}>
+                <FixtureSection
+                  type={type}
+                  products={state.fixtures[type]}
+                  onChange={p => updateFixtures(type, p)}
+                />
+              </div>
+            )}
+          </DetailCard>
+        );
+      })}
+
+      <DetailCard title="Konfigurasi Urinal" style={{ marginTop: 16 }}>
+        <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.line}` }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Droplets size={20} style={{ color: C.heading }} />
+            <div style={{ fontWeight: 600, fontSize: 15, color: C.heading }}>Konfigurasi Urinal</div>
           </div>
-          <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr':'1fr 1fr', gap:14 }}>
+        </div>
+        <div style={{ padding: '16px 20px 20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Tog
+              on={state.hasUrinal}
+              onChange={toggleUrinal}
+              label="Bangunan memiliki urinal"
+            />
+            <span style={{ fontSize: 13, color: C.muted }}>
+              {state.hasUrinal ? 'Aktif' : 'Nonaktif'}
+            </span>
+          </div>
+          <div style={{ marginTop: 10, fontSize: 12, color: C.muted, lineHeight: 1.6 }}>
+            Toggle ini menentukan pola pemakaian flushing. Jumlah unit urinal diisi pada bagian "Peturasan / Urinal" di atas.
+          </div>
+          {urinalConflict && (
+            <div style={{
+              marginTop: 10, padding: '10px 12px', borderRadius: 8,
+              background: C.warningBg, border: `1px solid ${C.warningLine}`, color: C.warningInk, fontSize: 13,
+            }}>
+              {state.hasUrinal
+                ? 'Urinal ditandai tersedia tetapi jumlah unitnya masih 0 — pemakaian flushing dihitung seolah urinal terpasang. Isi jumlah urinal atau matikan toggle ini.'
+                : 'Jumlah unit urinal sudah terisi tetapi toggle nonaktif — kebutuhan urinal akan diabaikan.'}
+            </div>
+          )}
+        </div>
+      </DetailCard>
+    </div>
+  );
+}
+
+// ─── Step 3: Lansekap & CT ───
+function Step3({ state, set }: { state: AppState; set: React.Dispatch<React.SetStateAction<AppState>> }) {
+  const updateLandscape = (field: keyof AppState['landscape'], val: string | number) =>
+    set(s => ({ ...s, landscape: { ...s.landscape, [field]: val } }));
+
+  const updateZone = (index: number, field: keyof LandscapeZone, val: string | number) =>
+    set(s => {
+      const zones = [...s.landscape.zones];
+      zones[index] = { ...zones[index], [field]: val };
+      return { ...s, landscape: { ...s.landscape, zones } };
+    });
+
+  const addZone = () =>
+    set(s => ({
+      ...s,
+      landscape: { ...s.landscape, zones: [...s.landscape.zones, { label: `Area ${s.landscape.zones.length + 1}`, basRate: LANDSCAPE_BASELINE_RATE, dsgRate: 0, areaShare: 0 }] },
+    }));
+
+  const removeZone = (index: number) =>
+    set(s => ({ ...s, landscape: { ...s.landscape, zones: s.landscape.zones.filter((_, i) => i !== index) } }));
+
+  const updateCT = (field: keyof AppState['coolingTower'], val: string | number | boolean) =>
+    set(s => ({ ...s, coolingTower: { ...s.coolingTower, [field]: val } }));
+
+  const totalShare = landscapeShareSum(state.landscape.zones);
+  const sharePct = landscapeSharePct(state.landscape.zones);
+  const shareExact = isLandscapeShareExact(state.landscape.zones);
+
+  return (
+    <div style={{ maxWidth: 1100 }}>
+      <DetailCard
+        title="Lansekap & CT"
+        icon={<Leaf size={20} />}
+        subtitle={`Baseline irigasi: ≤ ${LANDSCAPE_BASELINE_RATE} L/m²/hari | Maks ${LANDSCAPE_MAX_ZONES} zona | CT COC baseline: 3`}
+      >
+        {/* Lansekap Section */}
+        <div style={{ marginBottom: 24 }}>
+          <h4 style={{ fontSize: 14, fontWeight: 600, color: C.heading, marginBottom: 16, paddingBottom: 8, borderBottom: `1px solid ${C.line}` }}>
+            <Leaf size={16} style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: 8, color: C.brand }} />
+            Area Lansekap
+          </h4>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginBottom: 16 }}>
             <div>
-              <Label unit="m²">Net Lettable Area (NLA)</Label>
-              <Inp value={state.building.nla||''} onChange={v=>upd('nla',v)} step={0.001} min={250}/>
-              {nlaError && (
-                <div style={{ display:'flex', alignItems:'center', gap:5, fontSize:11, color:C.red, marginTop:4 }}>
-                  <AlertCircle size={11}/> {nlaError}
+              <Label>Total Area Irigasi (m²)</Label>
+              <NumField
+                value={state.landscape.area}
+                onChange={v => updateLandscape('area', v)}
+                step={0.001}
+                min={0}
+                max={100000000}
+                placeholder="0"
+                aria-label="Total area irigasi"
+              />
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <Label style={{ marginBottom: 0 }}>Zona Irigasi (Maks {LANDSCAPE_MAX_ZONES})</Label>
+              {state.landscape.zones.length < LANDSCAPE_MAX_ZONES && (
+                <button type="button" onClick={addZone} style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '6px 12px', borderRadius: 8,
+                  background: 'transparent', border: `1.5px solid ${C.heading}`,
+                  color: C.heading, fontFamily: 'var(--sans)', fontSize: 13, fontWeight: 600,
+                  cursor: 'pointer', transition: 'background 0.15s, color 0.15s',
+                }} onMouseEnter={e => e.currentTarget.style.background = C.lighter} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                  <Plus size={12} /> Tambah Zona
+                </button>
+              )}
+            </div>
+
+            <div style={{ border: `1px solid ${C.line}`, borderRadius: 8, overflowX: 'auto' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 1fr) 110px 110px 90px 64px', gap: 8, minWidth: 560, padding: '10px 12px', background: C.lighter, borderBottom: `1px solid ${C.line}`, fontSize: 12, fontWeight: 600, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: 'var(--sans)' }}>
+                <div>Nama Zona</div>
+                <div style={{ textAlign: 'center' }}>Baseline (L/m²)</div>
+                <div style={{ textAlign: 'center' }}>Desain (L/m²)</div>
+                <div style={{ textAlign: 'center' }}>% Area</div>
+                <div style={{ textAlign: 'center' }}>Aksi</div>
+              </div>
+              {state.landscape.zones.map((zone, i) => (
+                <div key={i} style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 1fr) 110px 110px 90px 64px', gap: 8, minWidth: 560, padding: '8px 12px', alignItems: 'center', borderBottom: i < state.landscape.zones.length - 1 ? `1px solid ${C.line}` : 'none', background: '#fff' }}>
+                  <Inp
+                    type="text"
+                    value={zone.label}
+                    onChange={e => updateZone(i, 'label', e.target.value)}
+                    placeholder={`Zona ${i + 1}`}
+                    style={{ fontSize: 13 }}
+                  />
+                  <Inp
+                    type="number"
+                    value={zone.basRate || ''}
+                    onChange={e => updateZone(i, 'basRate', parseFloat(e.target.value.replace(',', '.')) || 0)}
+                    step={0.001}
+                    min={0}
+                    readOnly
+                    style={{ width: '100%', textAlign: 'center', fontSize: 13, fontVariantNumeric: 'tabular-nums' }}
+                  />
+                  <NumField
+                    value={zone.dsgRate}
+                    onChange={v => updateZone(i, 'dsgRate', v)}
+                    step={0.001}
+                    min={0}
+                    max={100000}
+                    style={{ fontSize: 13 }}
+                    aria-label={`Laju desain zona ${i + 1}`}
+                  />
+                  <NumField
+                    value={zone.areaShare * 100}
+                    onChange={v => updateZone(i, 'areaShare', v / 100)}
+                    step={0.1}
+                    min={0}
+                    max={100}
+                    style={{ fontSize: 13 }}
+                    aria-label={`Persentase area zona ${i + 1}`}
+                  />
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
+                    {state.landscape.zones.length > 1 && (
+                      <IconGhost onClick={() => removeZone(i)} aria-label={`Hapus zona ${i + 1}`}>
+                        <Trash2 size={12} />
+                      </IconGhost>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {state.landscape.zones.length === 0 && (
+                <div style={{ padding: '20px 12px', textAlign: 'center', color: C.muted, fontSize: 13 }}>
+                  Belum ada zona. Klik "Tambah Zona" untuk memulai.
                 </div>
               )}
             </div>
-            <div>
-              <Label unit="orang">{tc.occupant1Label}</Label>
-              <Inp value={state.building.occupant1||''} onChange={v=>upd('occupant1',v)} step={1}/>
+          </div>
+
+          {/* Zone Sum Validation - Prominent */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 12, padding: 12,
+            background: shareExact ? C.successBg : C.dangerBg,
+            border: `1px solid ${shareExact ? C.successLine : C.dangerLine}`,
+            borderRadius: 8,
+            color: shareExact ? C.successInk : C.dangerInk,
+            marginTop: 8
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 18 }}>{shareExact ? '✓' : '✕'}</span>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>
+                  Total Persentase Area: <strong>{fmtFixed(sharePct, 1)}%</strong>
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.8 }}>
+                  {shareExact ? 'Valid — total 100%' : 'Harus total 100% untuk validasi WAC 1'}
+                </div>
+              </div>
             </div>
-          </div>
-          <div>
-            <Label unit="jam/hari">Jam Operasional</Label>
-            <Inp value={state.building.opHours||''} onChange={v=>upd('opHours',v)} step={0.001} min={1} max={24}/>
+            {sharePct > 1 && (
+              <span style={{ marginLeft: 'auto', fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'rgba(0,0,0,0.1)' }}>
+                {fmtFixed((sharePct - 100), 1)}% kelebihan
+              </span>
+            )}
+            {sharePct > 0 && sharePct < 1 && (
+              <span style={{ marginLeft: 'auto', fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'rgba(0,0,0,0.1)' }}>
+                {fmtFixed((100 - sharePct), 1)}% kekurangan
+              </span>
+            )}
           </div>
         </div>
-      </Card>
-      {state.building.occupant1 > 0 && (
-        <Card style={{ background:'#F0FDF4', borderColor:'#86EFAC' }}>
-          <SecTitle>Parameter Konstanta — {tc.label}</SecTitle>
-          <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr 1fr':'repeat(3,1fr)', gap:10 }}>
-            <Pill val={`${tc.wcMale} / ${tc.wcFemale}`} label="WC pakai/hari ♂/♀"/>
-            <Pill val={tc.tapUsage} label="Tap pakai/hari"/>
-            <Pill val={tc.resultUnit} label="Satuan WAC 1"/>
+
+        {/* Cooling Tower Section - Stacked vertical layout */}
+        <div>
+          <h4 style={{ fontSize: 14, fontWeight: 600, color: C.heading, marginBottom: 16, paddingBottom: 8, borderBottom: `1px solid ${C.line}` }}>
+            <Zap size={16} style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: 8, color: C.cta }} />
+            Cooling Tower
+          </h4>
+          <div style={{ display: 'grid', gap: 16 }}>
+            {/* Switch inline with label */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <Tog
+                on={state.coolingTower.enabled}
+                onChange={v => updateCT('enabled', v)}
+                label="aktifkan cooling tower"
+              />
+            </div>
+            
+            {/* Fields stacked vertically - one row per parameter */}
+            <div style={{ display: 'grid', gap: 16 }}>
+              <div>
+                <Label>Beban Pendingin (TR)</Label>
+                <NumField
+                  value={state.coolingTower.load}
+                  onChange={v => updateCT('load', v)}
+                  step={0.001}
+                  min={0}
+                  max={1000000}
+                  placeholder="0"
+                  disabled={!state.coolingTower.enabled}
+                  aria-label="Beban pendingin cooling tower"
+                />
+              </div>
+              <div>
+                <Label unit="(baseline 3 siklus)">Siklus Konsentrasi (COC)</Label>
+                <NumField
+                  value={state.coolingTower.coc ?? 3}
+                  onChange={v => updateCT('coc', v)}
+                  min={2}
+                  max={10}
+                  integer
+                  placeholder="3"
+                  disabled={!state.coolingTower.enabled}
+                  aria-label="Siklus konsentrasi cooling tower"
+                />
+              </div>
+            </div>
+
+            <div style={{ marginTop: 8, padding: 12, background: C.lighter, borderRadius: 8, fontSize: 12, color: C.muted, lineHeight: 1.6 }}>
+              <strong style={{ color: C.heading }}>Rumus:</strong> Air make-up = evaporasi + blowdown (evaporasi ÷ (COC − 1)). 
+              Nilai baseline sudah mencakup blowdown pada 3 siklus; menaikkan COC menurunkan porsi blowdown, sehingga penghematan cooling tower ikut terhitung.
+            </div>
+
+            {state.coolingTower.enabled && state.coolingTower.load > 0 && (
+              <div style={{ padding: 12, background: C.infoBg, borderRadius: 8, fontSize: 12, color: C.infoInk, border: `1px solid ${C.info}` }}>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>Estimasi Air Make-up</div>
+                <div>Beban: <strong>{fmt(state.coolingTower.load, 0)} TR</strong> × 12 L/TR/jam × {fmt(state.building.opHours, 1)} jam = <strong>{fmt(state.coolingTower.load * 12 * state.building.opHours, 0)} L/hari</strong> (evaporasi)</div>
+                <div>COC {state.coolingTower.coc}: Blowdown = {fmt(state.coolingTower.load * 12 * state.building.opHours / (state.coolingTower.coc - 1), 0)} L/hari</div>
+                <div style={{ fontWeight: 600, marginTop: 4 }}>
+                  Total Make-up: ~{fmt(state.coolingTower.load * 12 * state.building.opHours * (1 + 1 / (state.coolingTower.coc - 1)), 0)} L/hari
+                </div>
+              </div>
+            )}
           </div>
-        </Card>
-      )}
+        </div>
+      </DetailCard>
     </div>
   );
 }
 
-// ─── Step 2 — Fitur Air ───────────────────────────────────────────────────────
-function Step2({ state, set }:{ state:AppState; set:(s:AppState)=>void }) {
-  const available = FIXTURE_AVAILABILITY[state.building.typology] ?? FIXTURE_AVAILABILITY.KANTOR;
-  const wac2 = useMemo(()=>calcWAC2(state.fixtures),[state.fixtures]);
-  const { isMobile, isTablet } = useBreakpoint();
-  const stacked = isMobile || isTablet;
-  const updFixture = (type:FixtureTypeId, prods:AppState['fixtures'][FixtureTypeId]) =>
-    set({ ...state, fixtures:{ ...state.fixtures, [type]:prods } });
+// ─── Step 4: Air Hujan ───
+function Step4({ state, set, R }: { state: AppState; set: React.Dispatch<React.SetStateAction<AppState>>; R: ReturnType<typeof calcAll> }) {
+  const updateRainwater = (field: keyof AppState['rainwater'], val: string | number | boolean) =>
+    set(s => ({ ...s, rainwater: { ...s.rainwater, [field]: val } }));
 
-  const Panel = (
-    <Card style={stacked?{}:{ position:'sticky', top:72 }}>
-      <SecTitle icon={Award}>Nilai WAC 2 (Live)</SecTitle>
-      <div style={{ textAlign:'center', padding:'12px 0' }}>
-        <div style={{ fontSize:52, fontWeight:800, color:C.teal, lineHeight:1 }}>{wac2.pts}</div>
-        <div style={{ fontSize:13, color:C.s500 }}>dari 3 poin (NB 1.3)</div>
-      </div>
-      <div style={{ background:C.s100, borderRadius:6, height:8, overflow:'hidden', margin:'8px 0 16px' }}>
-        <div style={{ height:'100%', background:C.teal, borderRadius:6, width:`${(wac2.pts/3)*100}%`, transition:'0.4s' }}/>
-      </div>
-      {[['Total WF',wac2.total,C.s800],['WF Hemat (≤ baseline)',wac2.hemat,C.green],['% WF Hemat',fmtPct(wac2.pct),C.teal]].map(([l,v,c])=>(
-        <div key={String(l)} style={{ display:'flex', justifyContent:'space-between', padding:'5px 0', borderBottom:`1px solid ${C.s100}` }}>
-          <span style={{ fontSize:12, color:C.s500 }}>{l}</span>
-          <span style={{ fontSize:12, fontWeight:700, color:c as string }}>{v}</span>
-        </div>
-      ))}
-      <div style={{ marginTop:12, padding:10, background:C.s100, borderRadius:8 }}>
-        <div style={{ fontSize:10, color:C.s500, lineHeight:1.8 }}>
-          ≥ 25% → 1 poin<br/>≥ 50% → 2 poin<br/>≥ 75% → 3 poin<br/>
-          <span style={{ color:C.s300 }}>Standar: GREENSHIP NB 1.3</span>
-        </div>
-      </div>
-    </Card>
-  );
+  const rw = calcRainwater(state);
+  const p2Pass = rw.capRatio >= 0.1;
+  const p2Unknown = !R?.wac1?.p2DataComplete;
 
-  return (
-    <div style={{ display:'grid', gridTemplateColumns:stacked?'1fr':'1fr 260px', gap:18, alignItems:'start' }}>
-      <div>
-        {stacked && <div style={{ marginBottom:16 }}>{Panel}</div>}
-        <Card style={{ marginBottom:16 }}>
-          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16, flexWrap:'wrap', gap:10 }}>
-            <SecTitle icon={Droplets}>WF Flush</SecTitle>
-            <Tog on={state.hasUrinal} onChange={v=>set({...state,hasUrinal:v})} label="Ada Urinal"/>
-          </div>
-          {(['WC_FLUSH_VALVE','WC_FLUSH_TANK',...(state.hasUrinal?['URINAL']:[])] as FixtureTypeId[])
-            .filter(t=>available.includes(t))
-            .map(t=><FixtureSection key={t} type={t} products={state.fixtures[t]} onChange={p=>updFixture(t,p)}/>)}
-        </Card>
-        <Card>
-          <SecTitle icon={Droplets}>WF Tap &amp; Shower</SecTitle>
-          {(['KERAN_TEMBOK','KERAN_WASTAFEL','KERAN_WUDHU','SHOWER'] as FixtureTypeId[])
-            .filter(t=>available.includes(t))
-            .map(t=><FixtureSection key={t} type={t} products={state.fixtures[t]} onChange={p=>updFixture(t,p)}/>)}
-        </Card>
-      </div>
-      {!stacked && Panel}
-    </div>
-  );
-}
-
-// ─── Step 3 — Lansekap & CT ───────────────────────────────────────────────────
-function Step3({ state, set }:{ state:AppState; set:(s:AppState)=>void }) {
-  const ls = state.landscape;
-  const ct = state.coolingTower;
-  const sharePct = landscapeSharePct(ls.zones);
-  const shareOk = isLandscapeShareExact(ls.zones);
-  const { isMobile } = useBreakpoint();
-  const updZone = (i:number, field:string, val:string|number) => {
-    const zones = ls.zones.map((z,j)=>j===i?{...z,[field]:val}:z);
-    set({ ...state, landscape:{...ls, zones} });
+  const prefillRoofArea = () => {
+    const nla = state.building.nla || 0;
+    if (nla > 0) {
+      const suggested = nla * 0.8;
+      updateRainwater('roofArea', suggested);
+    }
   };
 
   return (
-    <div style={{ maxWidth:700, margin:'0 auto', display:'grid', gap:16 }}>
-      <Card>
-        <SecTitle icon={Leaf}>Lansekap / Irigasi</SecTitle>
-        <div style={{ marginBottom:14 }}>
-          <Label unit="m²">Luas lansekap dengan irigasi</Label>
-          <Inp value={ls.area||''} onChange={v=>set({...state,landscape:{...ls,area:v as number}})} step={0.001}/>
-        </div>
-        {/* Column headers */}
-        {isMobile ? (
-          ls.zones.map((z,i)=>(
-            <div key={i} style={{ border:`1px solid ${C.s200}`, borderRadius:8, padding:12, marginBottom:10 }}>
-              <div style={{ display:'flex', justifyContent:'space-between', marginBottom:8 }}>
-                <Inp type="text" value={z.label} onChange={v=>updZone(i,'label',v)} placeholder={`Area ${i+1}`} style={{ flex:1, marginRight:8 }}/>
-                {i>0 && <button onClick={()=>set({...state,landscape:{...ls,zones:ls.zones.filter((_,j)=>j!==i)}})}
-                  style={{ color:C.s300, background:'none', border:'none', cursor:'pointer' }}><Trash2 size={13}/></button>}
+    <div style={{ maxWidth: 1100 }}>
+      <DetailCard
+        title="Tanki Air Hujan"
+        icon={<CloudRain size={20} />}
+        subtitle="Air Alternatif Air Hujan"
+      >
+        <div style={{ display: 'grid', gap: 16 }}>
+          {/* Switch inline with label */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Tog
+              on={state.rainwater.hasTank}
+              onChange={v => updateRainwater('hasTank', v)}
+              label="aktifkan tanki air hujan"
+            />
+          </div>
+
+          {!state.rainwater.hasTank && (
+            <div style={{ padding: 24, textAlign: 'center', background: C.lighter, borderRadius: 8, border: `1px dashed ${C.line}` }}>
+              <CloudRain size={32} style={{ color: C.muted, marginBottom: 8 }} />
+              <div style={{ fontWeight: 600, color: C.heading, marginBottom: 4 }}>Aktifkan air hujan untuk melanjutkan</div>
+              <div style={{ fontSize: 13, color: C.muted }}>
+                Data bangunan dan peralatan (Langkah 1 & 2) harus lengkap agar potensi air hujan dapat dihitung.
               </div>
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8 }}>
-                {/* Baseline locked at 5 L/m² */}
+            </div>
+          )}
+
+          {state.rainwater.hasTank && (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
                 <div>
-                    <Label>Baseline (L/m²)</Label>
-                    <div style={{ padding:'7px 10px', background:C.s100, borderRadius:8, fontSize:13, color:C.s500, fontWeight:600 }}>
-                      {LANDSCAPE_BASELINE_RATE} <span style={{ fontSize:10, color:C.s300 }}>(tetap)</span>
+                  <Label>Curah Hujan Rata-rata per Hujan (mm)</Label>
+                  <NumField
+                    value={state.rainwater.avgRainfall}
+                    onChange={v => updateRainwater('avgRainfall', v)}
+                    step={0.001}
+                    min={0}
+                    max={10000}
+                    placeholder="50"
+                    aria-label="Curah hujan rata-rata per hujan"
+                  />
+                </div>
+                <div>
+                  <Label>Persentase Hari Hujan (0-1)</Label>
+                  <NumField
+                    value={state.rainwater.rainyDayPct}
+                    onChange={v => updateRainwater('rainyDayPct', v)}
+                    step={0.001}
+                    min={0}
+                    max={1}
+                    placeholder="0,55"
+                    aria-label="Persentase hari hujan"
+                  />
+                </div>
+                <div>
+                  <Label>Koefisien Aliran (0-1)</Label>
+                  <NumField
+                    value={state.rainwater.runoffCoef}
+                    onChange={v => updateRainwater('runoffCoef', v)}
+                    step={0.001}
+                    min={0}
+                    max={1}
+                    placeholder="0,78"
+                    aria-label="Koefisien aliran"
+                  />
+                </div>
+                <div>
+                  <Label>Luas Atap Tangkapan (m²)</Label>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+                    <NumField
+                      value={state.rainwater.roofArea}
+                      onChange={v => updateRainwater('roofArea', v)}
+                      step={0.001}
+                      min={0}
+                      max={100000000}
+                      placeholder="0"
+                      aria-label="Luas atap tangkapan"
+                      style={{ flex: 1 }}
+                    />
+                    {state.building.nla > 0 && state.rainwater.roofArea === 0 && (
+                      <button
+                        type="button"
+                        onClick={prefillRoofArea}
+                        style={{
+                          padding: '10px 14px',
+                          borderRadius: 8,
+                          border: `1px solid ${C.brand}`,
+                          background: 'transparent',
+                          color: C.brand,
+                          fontFamily: 'var(--sans)',
+                          fontSize: 12,
+                          fontWeight: 500,
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap',
+                          height: '40px',
+                        }}
+                        title={`Isi otomatis: NLA (${fmt(state.building.nla, 0)} m²) × 0.8 = ${fmt(state.building.nla * 0.8, 0)} m²`}
+                      >
+                        Isi dari NLA
+                      </button>
+                    )}
+                  </div>
+                  {state.building.nla > 0 && state.rainwater.roofArea === 0 && (
+                    <span style={{ fontSize: 11, color: C.muted, marginTop: 4, display: 'block' }}>
+                      Saran: {fmt(state.building.nla * 0.8, 0)} m² (80% dari NLA {fmt(state.building.nla, 0)} m²)
+                    </span>
+                  )}
+                </div>
+                <div>
+                  <Label>Kapasitas Tangki (L)</Label>
+                  <NumField
+                    value={state.rainwater.tankCapacity}
+                    onChange={v => updateRainwater('tankCapacity', v)}
+                    step={1}
+                    min={0}
+                    max={1000000000}
+                    placeholder="0"
+                    aria-label="Kapasitas tangki"
+                  />
+                </div>
+              </div>
+
+              {/* P2 Prerequisite Callout - Prominent */}
+              <div style={{
+                marginTop: 16,
+                padding: 16,
+                borderRadius: 8,
+                background: p2Pass ? C.successBg : C.warningBg,
+                border: `1px solid ${p2Pass ? C.successLine : C.warningLine}`,
+                color: p2Pass ? C.successInk : C.warningInk,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                  <div style={{ fontSize: 24, flexShrink: 0 }}>{p2Pass ? '✓' : '⚠'}</div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 600, fontSize: 15 }}>
+                      {p2Pass ? 'Prasyarat WAC P2 Terpenuhi' : 'Prasyarat WAC P2 Belum Terpenuhi'}
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 13, opacity: 0.9 }}>
+                      Rasio penampungan: <strong>{fmtPct(rw.capRatio)}</strong> (minimum 10% dari volume ideal tahunan).
+                      {state.rainwater.tankCapacity === 0 && ' Tangki belum diisi.'}
+                    </div>
+                    {!p2Pass && state.rainwater.tankCapacity > 0 && (
+                      <div style={{ marginTop: 8, fontSize: 13 }}>
+                        Kurang: <strong>{fmt((0.1 * rw.idealVolume) - state.rainwater.tankCapacity, 0)} L</strong> untuk mencapai 10% ({fmt(0.1 * rw.idealVolume, 0)} L).
+                      </div>
+                    )}
+                  </div>
+                  <Badge variant={p2Pass ? 'success' : 'warning'} size="sm">
+                    {p2Pass ? 'LULUS P2' : 'PERLU PERBAIKAN'}
+                  </Badge>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </DetailCard>
+
+      {/* Tank Gauge Visual (Right - Sticky) */}
+      <DetailCard
+        title="Visualisasi Tangki"
+        icon={<Droplets size={20} />}
+        style={{ position: 'sticky', top: 'calc(var(--hdr-h) + 24px)', height: 'fit-content' }}
+      >
+        {!state.rainwater.hasTank ? (
+          <div style={{ padding: 24, textAlign: 'center', color: C.muted }}>
+            <CloudRain size={48} style={{ marginBottom: 12, opacity: 0.5 }} />
+            <div style={{ fontWeight: 600 }}>Aktifkan air hujan</div>
+            <div style={{ fontSize: 13, marginTop: 4 }}>untuk melihat visualisasi</div>
+          </div>
+        ) : (
+          <>
+            {/* Tank Gauge */}
+            <div style={{ textAlign: 'center', padding: '20px 16px' }}>
+              <div style={{ position: 'relative', width: 120, height: 200, margin: '0 auto 16px' }}>
+                {/* Tank Outline */}
+                <svg width="120" height="200" viewBox="0 0 120 200" style={{ overflow: 'visible' }}>
+                  <rect x="10" y="10" width="100" height="180" rx="8" fill="none" stroke={C.line} strokeWidth="2" />
+                    {/* Tank Fill */}
+                    <rect
+                      x="12"
+                      y={12 + 176 * (1 - Math.min(rw.capRatio, 1))}
+                      width="96"
+                      height={176 * Math.min(rw.capRatio, 1)}
+                      rx="6"
+                      fill={p2Pass ? C.accent : C.warning}
+                      style={{ transition: 'height 0.4s ease-out, y 0.4s ease-out' }}
+                    />
+                    {/* 10% P2 Line */}
+                    <line
+                      x1="8" y1={12 + 176 * (1 - 0.1)}
+                      x2="112" y2={12 + 176 * (1 - 0.1)}
+                      stroke={C.warning}
+                      strokeWidth="1.5"
+                      strokeDasharray="6 4"
+                    />
+                    <text x="115" y={12 + 176 * (1 - 0.1) + 4} textAnchor="end" fontSize="8" fill={C.warning} fontFamily="var(--sans)" fontWeight="600">
+                      10% P2
+                    </text>
+                  </svg>
+                </div>
+                <div style={{ fontFamily: 'var(--display)', fontSize: 28, fontWeight: 700, color: C.heading }}>
+                  {fmtPct(Math.min(rw.capRatio, 1))}
+                </div>
+                <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>
+                  Rasio Penampungan
+                </div>
+              </div>
+
+              <div style={{ borderTop: `1px solid ${C.line}`, paddingTop: 16 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, fontSize: 13 }}>
+                  <div style={{ textAlign: 'center', padding: '8px 0', background: C.lighter, borderRadius: 6 }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Kapasitas</div>
+                    <div style={{ fontFamily: 'var(--display)', fontSize: 16, fontWeight: 700, color: C.heading }}>{fmt(state.rainwater.tankCapacity, 0)} L</div>
+                  </div>
+                  <div style={{ textAlign: 'center', padding: '8px 0', background: C.lighter, borderRadius: 6 }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Ideal Tahunan</div>
+                    <div style={{ fontFamily: 'var(--display)', fontSize: 16, fontWeight: 700, color: C.accent }}>{fmt(rw.idealVolume, 0)} L</div>
+                  </div>
+                  <div style={{ textAlign: 'center', padding: '8px 0', background: C.lighter, borderRadius: 6, gridColumn: '1 / -1' }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Tersedia / Hari Basah</div>
+                    <div style={{ fontFamily: 'var(--display)', fontSize: 16, fontWeight: 700, color: C.info }}>{fmt(rw.availWet, 0)} L</div>
+                  </div>
+                </div>
+
+                {/* Quick Calculation Helper */}
+                <div style={{ marginTop: 16, padding: 12, background: C.infoBg, borderRadius: 8, border: `1px solid ${C.info}` }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: C.infoInk, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                    Estimasi Cepat
+                  </div>
+                  <div style={{ fontSize: 12, color: C.infoInk, lineHeight: 1.7 }}>
+                    <div>Atap: {fmt(state.rainwater.roofArea, 0)} m² × {fmt(state.rainwater.avgRainfall, 0)} mm × {fmtFixed(state.rainwater.runoffCoef, 2)} = {fmt(state.rainwater.roofArea * state.rainwater.avgRainfall * state.rainwater.runoffCoef, 0)} L/hujan</div>
+                    <div>Hujan/tahun: {fmt(state.rainwater.rainyDayPct * 365, 0)} hari × di atas = {fmt(state.rainwater.roofArea * state.rainwater.avgRainfall * state.rainwater.runoffCoef * state.rainwater.rainyDayPct * 365, 0)} L/tahun</div>
+                    <div style={{ marginTop: 4, fontWeight: 600 }}>Ideal: {fmt(rw.idealVolume, 0)} L/tahun</div>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </DetailCard>
+    </div>
+  );
+}
+
+// ─── Step 5: Neraca Air ───
+function Step5({ state, set, R }: { state: AppState; set: React.Dispatch<React.SetStateAction<AppState>>; R: ReturnType<typeof calcAll> }) {
+  const [activeScenario, setActiveScenario] = useState<'wet' | 'dry'>('wet');
+  const [syncScenarios, setSyncScenarios] = useState(true);
+  const { isMobile } = useBreakpoint();
+
+  const scenario = state.waterBalance[activeScenario];
+  const daily = R.daily;
+  const rw = calcRainwater(state);
+
+  const handleSourceChange = (id: WBSourceId, field: keyof typeof scenario.sources[0], val: string | number | boolean) => {
+    set(s => ({
+      ...s,
+      waterBalance: {
+        ...s.waterBalance,
+        [activeScenario]: {
+          ...s.waterBalance[activeScenario],
+          sources: s.waterBalance[activeScenario].sources.map(r => r.id === id ? { ...r, [field]: val } : r),
+        },
+      },
+    }));
+    if (syncScenarios) {
+      const otherKey = activeScenario === 'wet' ? 'dry' : 'wet';
+      set(s => ({
+        ...s,
+        waterBalance: {
+          ...s.waterBalance,
+          [otherKey]: {
+            ...s.waterBalance[otherKey],
+            sources: s.waterBalance[otherKey].sources.map(r => r.id === id ? { ...r, [field]: val } : r),
+          },
+        },
+      }));
+    }
+  };
+
+  const handleUseChange = (id: WBUseId, field: keyof typeof scenario.uses[0], val: string | number | boolean) => {
+    set(s => ({
+      ...s,
+      waterBalance: {
+        ...s.waterBalance,
+        [activeScenario]: {
+          ...s.waterBalance[activeScenario],
+          uses: s.waterBalance[activeScenario].uses.map(r => r.id === id ? { ...r, [field]: val } : r),
+        },
+      },
+    }));
+    if (syncScenarios) {
+      const otherKey = activeScenario === 'wet' ? 'dry' : 'wet';
+      set(s => ({
+        ...s,
+        waterBalance: {
+          ...s.waterBalance,
+          [otherKey]: {
+            ...s.waterBalance[otherKey],
+            uses: s.waterBalance[otherKey].uses.map(r => r.id === id ? { ...r, [field]: val } : r),
+          },
+        },
+      }));
+    }
+  };
+
+  const sourceLabels: Record<WBSourceId, string> = {
+    'flush': 'Flushing WC',
+    'urinal': 'Peturasan / Urinal',
+    'tap': 'Keran Tembok + Wastafel',
+    'wudhu': 'Keran Wudhu',
+    'shower': 'Shower Mandi',
+    'ct_condensate': 'Air Kondensasi CT',
+    'rainwater': 'Air Hujan',
+    'others': 'Lainnya',
+  };
+
+  const useLabels: Record<WBUseId, string> = {
+    'flush': 'Flushing WC',
+    'urinal': 'Peturasan / Urinal',
+    'tap': 'Keran Tembok + Wastafel',
+    'wudhu': 'Keran Wudhu',
+    'shower': 'Shower Mandi',
+    'ct_makeup': 'Make-up Water CT',
+    'irrigation': 'Irigasi Lansekap',
+  };
+
+  const sourceRows = scenario.sources.map(src => {
+    const available = computeSourceAvailable(src.id as WBSourceId, daily, rw.availWet, activeScenario === 'dry', src.availableManual);
+    return { ...src, autoValue: available };
+  });
+
+  const useRows = scenario.uses.map(use => ({
+    ...use,
+    required: computeUseRequired(use.id as WBUseId, daily),
+  }));
+
+  const sourceTotal = sourceRows.reduce((sum, s) => sum + (s.auto ? s.autoValue : s.volumeDiolah), 0);
+  const useTotal = useRows.reduce((sum, u) => sum + (u.dariAlt + u.dariRecycle), 0);
+  const balance = sourceTotal - useTotal;
+  const reductionPct = sourceTotal > 0 ? 1 - (useTotal / sourceTotal) : 0;
+
+  // Responsive render: Mobile = stacked cards, Desktop = tables
+  const renderSources = () => {
+    if (isMobile) {
+      return (
+        <div style={{ display: 'grid', gap: 12 }}>
+          {sourceRows.map(src => {
+            const sourceId = src.id as WBSourceId;
+            const isAuto = src.auto || false;
+            const available = src.autoValue;
+            const processed = isAuto ? available : src.volumeDiolah;
+            const manualInput = sourceId === 'ct_condensate' || sourceId === 'others';
+
+            return (
+              <DetailCard key={src.id} title={sourceLabels[sourceId]} style={{ padding: 0 }}>
+                <div style={{ padding: '14px 16px', background: C.lighter, borderBottom: `1px solid ${C.line}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <strong style={{ color: C.heading, fontSize: 14 }}>{sourceLabels[sourceId]}</strong>
+                    <AutoPill
+                      on={isAuto}
+                      onToggle={() => handleSourceChange(sourceId, 'auto', !isAuto)}
+                      title={isAuto ? 'Klik untuk input manual' : 'Klik untuk hitung otomatis'}
+                    />
+                  </div>
+                  <div style={{ fontFamily: 'var(--display)', fontSize: 18, fontWeight: 700, color: C.heading }}>
+                    {fmt(processed, 0)} L/hari
+                  </div>
+                </div>
+                <div style={{ padding: '12px 16px', display: 'grid', gap: 12 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, color: C.muted, marginBottom: 4, fontWeight: 500 }}>Tersedia (Auto)</label>
+                      <div style={{ fontFamily: 'var(--display)', fontSize: 16, fontWeight: 600, color: C.info }}>{fmt(available, 0)} L/hari</div>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, color: C.muted, marginBottom: 4, fontWeight: 500 }}>Diolah</label>
+                      {isAuto ? (
+                        <div style={{ fontFamily: 'var(--display)', fontSize: 16, fontWeight: 600, color: C.heading }}>{fmt(available, 0)} L/hari</div>
+                      ) : (
+                        <NumField
+                          value={src.volumeDiolah}
+                          onChange={v => handleSourceChange(sourceId, 'volumeDiolah', v)}
+                          step={0.001}
+                          min={0}
+                          max={Math.max(0, available)}
+                          style={{ width: '100%', textAlign: 'right' }}
+                          aria-label={`Volume diolah ${sourceLabels[sourceId]}`}
+                        />
+                      )}
                     </div>
                   </div>
-                <div><Label>Desain (L/m²)</Label><Inp value={z.dsgRate||''} onChange={v=>updZone(i,'dsgRate',v)} step={0.001}/></div>
-                <div><Label>% Area</Label><Inp value={parseFloat(((z.areaShare||0)*100).toFixed(3))||''} onChange={v=>updZone(i,'areaShare',Math.min(1,(v as number)/100))} step={0.001}/></div>
-              </div>
-            </div>
-          ))
-        ) : (
-          <>
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 110px 110px 90px 32px', gap:5, marginBottom:5 }}>
-              {['Zona','Baseline (L/m²)','Desain (L/m²)','% Area',''].map(h=>(
-                <div key={h} style={{ fontSize:10, color:C.s300 }}>{h}</div>
-              ))}
-            </div>
-            {ls.zones.map((z,i)=>(
-              <div key={i} style={{ display:'grid', gridTemplateColumns:'1fr 110px 110px 90px 32px', gap:5, marginBottom:6, alignItems:'center' }}>
-                <Inp type="text" value={z.label} onChange={v=>updZone(i,'label',v)} placeholder={`Area ${i+1}`}/>
-                {/* Baseline locked at 5 L/m² — read only */}
-                <div style={{ padding:'7px 10px', background:C.s100, borderRadius:8, fontSize:13, color:C.s500, fontWeight:600, textAlign:'center' }}>
-                  {LANDSCAPE_BASELINE_RATE} <span style={{ fontSize:9, color:C.s300 }}>(tetap)</span>
+                  {manualInput && (
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, color: C.muted, marginBottom: 4, fontWeight: 500 }}>Input Manual (L/hari)</label>
+                      <NumField
+                        value={src.availableManual}
+                        onChange={v => handleSourceChange(sourceId, 'availableManual', v)}
+                        step={0.001}
+                        min={0}
+                        max={1000000000}
+                        style={{ width: '100%', textAlign: 'right' }}
+                        aria-label={`Input manual ${sourceLabels[sourceId]}`}
+                      />
+                    </div>
+                  )}
                 </div>
-                <Inp value={z.dsgRate||''} onChange={v=>updZone(i,'dsgRate',v)} step={0.001}/>
-                <Inp value={parseFloat(((z.areaShare||0)*100).toFixed(3))||''} onChange={v=>updZone(i,'areaShare',Math.min(1,(v as number)/100))} step={0.001}/>
-                {i>0
-                  ? <button onClick={()=>set({...state,landscape:{...ls,zones:ls.zones.filter((_,j)=>j!==i)}})}
-                      style={{ color:C.s300, background:'none', border:'none', cursor:'pointer' }}><Trash2 size={13}/></button>
-                  : <div/>}
-              </div>
-            ))}
-          </>
-        )}
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginTop:8, flexWrap:'wrap', gap:8 }}>
-          {ls.zones.length<LANDSCAPE_MAX_ZONES && (
-            <button onClick={()=>set({...state,landscape:{...ls,zones:[...ls.zones,{label:`Area ${ls.zones.length+1}`,basRate:LANDSCAPE_BASELINE_RATE,dsgRate:0,areaShare:0}]}})}
-              style={{ fontSize:12, color:C.teal, background:'none', border:'none', cursor:'pointer', display:'flex', alignItems:'center', gap:4 }}>
-              <Plus size={11}/> Tambah Zona
-            </button>
-          )}
-          <div style={{ display:'flex', alignItems:'center', gap:6, fontSize:12 }}>
-            <span style={{ color:C.s500 }}>Total area share:</span>
-            <span style={{ fontWeight:700, color:shareOk?C.green:C.red }}>{fmtFixed(sharePct,3)}%</span>
-            {!shareOk && <span style={{ color:C.red }}>— harus tepat 100,000%</span>}
-          </div>
-        </div>
-        <div style={{ marginTop:10, fontSize:11, color:C.s400, padding:'8px 10px', background:C.s100, borderRadius:6 }}>
-          ℹ Baseline lansekap dikunci pada <strong>{LANDSCAPE_BASELINE_RATE} L/m²</strong> (standar SNI — tidak dapat diubah)
-        </div>
-      </Card>
-
-      <Card>
-        <SecTitle>Cooling Tower</SecTitle>
-        <div style={{ marginBottom:14 }}>
-          <Tog on={ct.enabled} onChange={v=>set({...state,coolingTower:{...ct,enabled:v}})} label="Menggunakan Cooling Tower (make-up water)"/>
-        </div>
-        {ct.enabled && (
-          <div>
-            <Label unit="TR">Beban Pendinginan</Label>
-            <Inp value={ct.load||''} onChange={v=>set({...state,coolingTower:{...ct,load:v as number}})} step={0.001}/>
-          </div>
-        )}
-      </Card>
-    </div>
-  );
-}
-
-// ─── Step 4 — Air Hujan ───────────────────────────────────────────────────────
-function Step4({ state, set }:{ state:AppState; set:(s:AppState)=>void }) {
-  const rw = state.rainwater;
-  const upd = (k:keyof typeof rw, v:boolean|number) => set({ ...state, rainwater:{...rw,[k]:v} });
-  const rRes = useMemo(()=>calcRainwater(state),[state]);
-  const { isMobile } = useBreakpoint();
-
-  return (
-    <div style={{ maxWidth:640, margin:'0 auto', display:'grid', gap:16 }}>
-      <Card>
-        <SecTitle icon={CloudRain}>Pemanenan Air Hujan (WAC 6)</SecTitle>
-        <div style={{ marginBottom:14 }}>
-          <Tog on={rw.hasTank} onChange={v=>upd('hasTank',v)} label="Terdapat tanki penyimpanan air hujan"/>
-        </div>
-        {/* Changed label per requirement */}
-        <div style={{ marginBottom:14 }}>
-          <PctInp value={rw.rainyDayPct} onChange={v=>upd('rainyDayPct',v)}
-            label="Persentase Hari Hujan minimal 10 Tahun"/>
-          <div style={{ fontSize:11, color:C.s400, marginTop:4 }}>
-            Hari Kering: {fmtFixed((1-rw.rainyDayPct)*100,3)}%
-          </div>
-        </div>
-        {rw.hasTank && (
-          <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr':'1fr 1fr', gap:14 }}>
-            <div><Label unit="Liter">Kapasitas tanki direncanakan</Label>
-              <Inp value={rw.tankCapacity||''} onChange={v=>upd('tankCapacity',v as number)} step={0.001}/></div>
-            <div><Label unit="mm">Rata-rata Curah Hujan</Label>
-              <Inp value={rw.avgRainfall||''} onChange={v=>upd('avgRainfall',v as number)} step={0.001}/></div>
-            <div><Label>Koefisien Limpasan (C)</Label>
-              <Inp value={rw.runoffCoef||''} onChange={v=>upd('runoffCoef',v as number)} step={0.001} min={0} max={1}/></div>
-            <div><Label unit="m²">Luas Atap Penampungan</Label>
-              <Inp value={rw.roofArea||''} onChange={v=>upd('roofArea',v as number)} step={0.001}/></div>
-          </div>
-        )}
-      </Card>
-      {rw.hasTank && rw.tankCapacity > 0 && (
-        <Card style={{ background:C.blueBg, borderColor:'#BFDBFE' }}>
-          <SecTitle>Hasil Kalkulasi Air Hujan</SecTitle>
-          <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr 1fr':'repeat(3,1fr)', gap:10, marginBottom:14 }}>
-            <Pill val={fmt(rRes.idealVolume,0)} label="Volume Ideal Tanki" unit="Liter" accent={C.blue}/>
-            <Pill val={fmtPct(rRes.capRatio)} label="Rasio Penampungan" accent={C.blue}/>
-            <Pill val={fmt(rRes.availWet,0)} label="Tersedia (hari hujan)" unit="L/hari" accent={C.blue}/>
-          </div>
-          <div style={{ background:'#DBEAFE', borderRadius:6, height:10, overflow:'hidden' }}>
-            <div style={{ background:C.blue, height:'100%', borderRadius:6, width:`${Math.min(100,rRes.capRatio*100)}%`, transition:'0.4s' }}/>
-          </div>
-          <div style={{ fontSize:11, color:C.blue, marginTop:6 }}>
-            Volume ideal = Luas Atap × Rata-rata Curah Hujan × Koefisien Limpasan
-          </div>
-        </Card>
-      )}
-    </div>
-  );
-}
-
-// ─── SOURCE / USE metadata ────────────────────────────────────────────────────
-const SOURCE_META: Record<WBSourceId,{ label:string; tag:'R'|'A'|'-'; manualAvail:boolean }> = {
-  flush:         { label:'Flushing WC (Flush Valve + Tank)',  tag:'R', manualAvail:false },
-  urinal:        { label:'Peturasan / Urinal',                tag:'R', manualAvail:false },
-  tap:           { label:'Keran Tembok / Wastafel',           tag:'R', manualAvail:false },
-  wudhu:         { label:'Keran Wudhu',                       tag:'A', manualAvail:false },
-  shower:        { label:'Shower Mandi',                      tag:'R', manualAvail:false },
-  ct_condensate: { label:'Air Kondensasi Cooling Tower',      tag:'A', manualAvail:true  },
-  rainwater:     { label:'Air Hujan',                         tag:'A', manualAvail:false },
-  others:        { label:'Lainnya',                           tag:'-', manualAvail:true  },
-};
-const USE_META: Record<WBUseId,{ label:string }> = {
-  flush:      { label:'Flushing WC (Flush Valve + Tank)' },
-  urinal:     { label:'Peturasan / Urinal'               },
-  tap:        { label:'Keran Tembok / Wastafel'          },
-  wudhu:      { label:'Keran Wudhu'                      },
-  shower:     { label:'Shower Mandi'                     },
-  ct_makeup:  { label:'Make-up Water Cooling Tower'      },
-  irrigation: { label:'Irigasi Lansekap'                 },
-};
-const TAG_STYLE: Record<'R'|'A'|'-',{ bg:string; color:string }> = {
-  R:{ bg:'#EFF6FF', color:'#2563EB' },
-  A:{ bg:'#F0FDF4', color:'#15803D' },
-  '-':{ bg:C.s100, color:C.s500    },
-};
-
-// ─── Small auto-fill toggle pill ──────────────────────────────────────────────
-function AutoPill({ on, onToggle, title }:{ on:boolean; onToggle:()=>void; title:string }) {
-  return (
-    <button onClick={onToggle} title={title} style={{
-      display:'inline-flex', alignItems:'center', gap:3,
-      padding:'2px 7px', borderRadius:20, border:`1px solid ${on?C.teal:C.s200}`,
-      background:on?'rgba(27,78,77,0.08)':'transparent',
-      color:on?C.teal:C.s300, fontSize:9, fontWeight:700, cursor:'pointer', fontFamily:'inherit',
-      transition:'0.15s', whiteSpace:'nowrap',
-    }}>
-      <Zap size={9}/> Auto
-    </button>
-  );
-}
-
-// ─── Step 5 — Neraca Air ──────────────────────────────────────────────────────
-function Step5({ state, set }:{ state:AppState; set:(s:AppState)=>void }) {
-  const [tab, setTab]               = useState<'wet'|'dry'>('wet');
-  const [syncScenarios, setSync]    = useState(false);
-  // Auto-fill sets — local UI prefs, not persisted
-  const [autoFillSrc, setAutoFillSrc] = useState<Set<WBSourceId>>(new Set());
-  const [autoFillAlt, setAutoFillAlt] = useState<Set<WBUseId>>(new Set());
-  const [autoFillRec, setAutoFillRec] = useState<Set<WBUseId>>(new Set());
-
-  const R   = useMemo(()=>calcAll(state),[state]);
-  const d   = R.daily;
-  const rw  = R.rainwater;
-  const { isMobile } = useBreakpoint();
-
-  // ── When auto-fill sources change or upstream daily values change, sync values ──
-  useEffect(()=>{
-    if(autoFillSrc.size===0) return;
-    let changed = false;
-    const applyAuto = (scenario:'wet'|'dry') => {
-      const isDry = scenario==='dry';
-      const sc = state.waterBalance[scenario];
-      const newSources = sc.sources.map(sr => {
-        if(!autoFillSrc.has(sr.id as WBSourceId)) return sr;
-        const computed = computeSourceAvailable(sr.id as WBSourceId, d, rw.availWet, isDry, sr.availableManual);
-        if(Math.abs(computed - sr.volumeDiolah) > 0.0001){ changed=true; return {...sr, volumeDiolah:computed}; }
-        return sr;
-      });
-      return { ...sc, sources:newSources };
-    };
-    const newWet = applyAuto('wet');
-    const newDry = applyAuto('dry');
-    if(changed) set({ ...state, waterBalance:{ wet:newWet, dry:newDry } });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[d.wcDsg, d.urinalDsg, d.tapDsg, d.wudhuDsg, d.showerDsg, d.ctDsg, d.lsDsg, rw.availWet, autoFillSrc]);
-
-  // ── When auto-fill uses change, sync values ──
-  useEffect(()=>{
-    if(autoFillAlt.size===0 && autoFillRec.size===0) return;
-    let changed = false;
-    const applyUseAuto = (scenario:'wet'|'dry') => {
-      const sc = state.waterBalance[scenario];
-      const newUses = sc.uses.map(ur=>{
-        const req = computeUseRequired(ur.id as WBUseId, d);
-        let a = ur.dariAlt, rec = ur.dariRecycle;
-        if(autoFillAlt.has(ur.id as WBUseId) && Math.abs(a-req)>0.0001){ a=req; rec=0; changed=true; }
-        if(autoFillRec.has(ur.id as WBUseId) && Math.abs(rec-req)>0.0001){ rec=req; a=0; changed=true; }
-        return (a!==ur.dariAlt||rec!==ur.dariRecycle) ? {...ur,dariAlt:a,dariRecycle:rec} : ur;
-      });
-      return { ...sc, uses:newUses };
-    };
-    const newWet = applyUseAuto('wet');
-    const newDry = applyUseAuto('dry');
-    if(changed){
-      set({ ...state, waterBalance:{ wet:newWet, dry:newDry } });
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[d.wcDsg,d.urinalDsg,d.tapDsg,d.wudhuDsg,d.showerDsg,d.ctDsg,d.lsDsg,autoFillAlt,autoFillRec]);
-
-  const scenario  = state.waterBalance[tab];
-  const isDry     = tab==='dry';
-
-  // Update helpers — apply changes to both scenarios if synced
-  const updSource = (id:string, field:'volumeDiolah'|'availableManual', val:number) => {
-    const patchSc = (sc:typeof scenario) => ({ ...sc, sources:sc.sources.map(r=>r.id===id?{...r,[field]:val}:r) });
-    const wb = syncScenarios
-      ? { wet:patchSc(state.waterBalance.wet), dry:patchSc(state.waterBalance.dry) }
-      : { ...state.waterBalance, [tab]:patchSc(scenario) };
-    set({ ...state, waterBalance:wb });
-  };
-  const updUse = (id:string, field:'dariAlt'|'dariRecycle', val:number) => {
-    const patchSc = (sc:typeof scenario) => ({ ...sc, uses:sc.uses.map(r=>r.id===id?{...r,[field]:val}:r) });
-    const wb = syncScenarios
-      ? { wet:patchSc(state.waterBalance.wet), dry:patchSc(state.waterBalance.dry) }
-      : { ...state.waterBalance, [tab]:patchSc(scenario) };
-    set({ ...state, waterBalance:wb });
-  };
-
-  // Toggle auto source
-  const toggleAutoSrc = (id:WBSourceId) => {
-    const next = new Set(autoFillSrc);
-    if(next.has(id)){
-      next.delete(id);
-    } else {
-      next.add(id);
-      // Immediately write computed value
-      const computed = computeSourceAvailable(id, d, rw.availWet, isDry,
-        scenario.sources.find(r=>r.id===id)?.availableManual??0);
-      updSource(id,'volumeDiolah',computed);
-    }
-    setAutoFillSrc(next);
-  };
-
-  // Toggle auto use (alt or rec) — mutually exclusive per row
-  const toggleAutoAlt = (id:WBUseId) => {
-    const nextAlt = new Set(autoFillAlt);
-    const nextRec = new Set(autoFillRec);
-    if(nextAlt.has(id)){
-      nextAlt.delete(id);
-    } else {
-      nextAlt.add(id);
-      nextRec.delete(id); // mutually exclusive
-      const req = computeUseRequired(id, d);
-      updUse(id,'dariAlt',req);
-      updUse(id,'dariRecycle',0);
-    }
-    setAutoFillAlt(nextAlt); setAutoFillRec(nextRec);
-  };
-  const toggleAutoRec = (id:WBUseId) => {
-    const nextRec = new Set(autoFillRec);
-    const nextAlt = new Set(autoFillAlt);
-    if(nextRec.has(id)){
-      nextRec.delete(id);
-    } else {
-      nextRec.add(id);
-      nextAlt.delete(id); // mutually exclusive
-      const req = computeUseRequired(id, d);
-      updUse(id,'dariRecycle',req);
-      updUse(id,'dariAlt',0);
-    }
-    setAutoFillRec(nextRec); setAutoFillAlt(nextAlt);
-  };
-
-  const availFor  = (id:WBSourceId) => {
-    const src = scenario.sources.find(r=>r.id===id);
-    return computeSourceAvailable(id, d, rw.availWet, isDry, src?.availableManual??0);
-  };
-  const diolahFor = (id:WBSourceId) => scenario.sources.find(r=>r.id===id)?.volumeDiolah??0;
-  const reqFor    = (id:WBUseId)    => computeUseRequired(id, d);
-
-  const totalDiolah     = scenario.sources.reduce((s,r)=>s+(r.volumeDiolah||0),0);
-  const totalPemenuhan  = scenario.uses.reduce((s,r)=>s+(r.dariAlt||0)+(r.dariRecycle||0),0);
-  const isBalanced      = totalDiolah >= totalPemenuhan;
-  const overRows        = scenario.uses.filter(r=>{
-    const req = computeUseRequired(r.id as WBUseId, d);
-    return req>0 && (r.dariAlt+r.dariRecycle)>req;
-  });
-
-  const resetScenario = () =>
-    set({ ...state, waterBalance:{ ...state.waterBalance, [tab]:mkWBScenario() } });
-
-  const tabBtn = (t:'wet'|'dry') => ({
-    padding:'8px 18px', borderRadius:8, fontSize:12, fontWeight:700,
-    cursor:'pointer' as const, fontFamily:'inherit',
-    background:tab===t?C.teal:C.white, color:tab===t?C.mint:C.s500,
-    border:tab===t?'none':`1px solid ${C.s200}`,
-  });
-
-  const ReadOnly = ({ val }:{ val:number }) => (
-    <div style={{ padding:'7px 10px', background:C.s100, borderRadius:8, fontSize:13, color:C.s500, fontVariantNumeric:'tabular-nums' }}>
-      {fmt(val,3)}
-    </div>
-  );
-
-  return (
-    <div style={{ maxWidth:940, margin:'0 auto', display:'grid', gap:16 }}>
-
-      {/* ── Controls bar ─────────────────────────────────────────── */}
-      <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-        <button style={tabBtn('wet')} onClick={()=>setTab('wet')}>☁ Hari Basah</button>
-        <button style={tabBtn('dry')} onClick={()=>setTab('dry')}>☀ Hari Kering</button>
-
-        {/* Sync toggle */}
-        <div onClick={()=>setSync(!syncScenarios)} style={{
-          display:'flex', alignItems:'center', gap:6, padding:'7px 12px', borderRadius:8, cursor:'pointer',
-          background:syncScenarios?'rgba(27,78,77,0.08)':'transparent',
-          border:`1px solid ${syncScenarios?C.teal:C.s200}`,
-        }}>
-          <Link2 size={13} style={{ color:syncScenarios?C.teal:C.s400 }}/>
-          <span style={{ fontSize:11, fontWeight:syncScenarios?700:400, color:syncScenarios?C.teal:C.s500 }}>
-            Samakan Basah &amp; Kering
-          </span>
-        </div>
-
-        <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:16, fontSize:11, color:C.s500 }}>
-          <span><span style={{ padding:'1px 7px', borderRadius:10, background:'#EFF6FF', color:'#2563EB', fontWeight:700 }}>R</span> Recycle</span>
-          <span><span style={{ padding:'1px 7px', borderRadius:10, background:'#F0FDF4', color:'#15803D', fontWeight:700 }}>A</span> Alternatif</span>
-          <button onClick={resetScenario} style={{ color:C.s400, background:'none', border:`1px solid ${C.s200}`, borderRadius:6, padding:'4px 10px', cursor:'pointer', fontFamily:'inherit', fontSize:11 }}>
-            Reset {tab==='wet'?'Basah':'Kering'}
-          </button>
-        </div>
-      </div>
-
-      {/* ── SIDE A — SOURCES ─────────────────────────────────────── */}
-      <Card>
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12, flexWrap:'wrap', gap:6 }}>
-          <SecTitle>A. Sumber Air Recycle &amp; Alternatif</SecTitle>
-          <div style={{ fontSize:10, color:C.s400 }}>
-            <Zap size={10} style={{ verticalAlign:'middle' }}/> Auto = Volume Diolah diisi otomatis dari Volume Tersedia
-          </div>
-        </div>
-        {isMobile ? (
-          WB_SOURCE_IDS.map(id=>{
-            const meta = SOURCE_META[id];
-            const avail = availFor(id);
-            const diolah = diolahFor(id);
-            const over = diolah > avail;
-            const isAuto = autoFillSrc.has(id);
-            return (
-              <div key={id} style={{ border:`1px solid ${C.s200}`, borderRadius:8, padding:12, marginBottom:10 }}>
-                <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8 }}>
-                  <span style={{ fontSize:10, padding:'1px 7px', borderRadius:10, fontWeight:700, background:TAG_STYLE[meta.tag].bg, color:TAG_STYLE[meta.tag].color }}>{meta.tag}</span>
-                  <span style={{ fontSize:13, fontWeight:500, color:C.s700, flex:1 }}>{meta.label}</span>
-                  <AutoPill on={isAuto} onToggle={()=>toggleAutoSrc(id)} title="Auto-isi Volume Diolah = Volume Tersedia"/>
-                </div>
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-                  <div>
-                    <Label>Volume Tersedia (L/hari)</Label>
-                    {meta.manualAvail
-                      ? <Inp value={scenario.sources.find(r=>r.id===id)?.availableManual||''} onChange={v=>updSource(id,'availableManual',v as number)} step={0.001}/>
-                      : <ReadOnly val={avail}/>}
-                  </div>
-                  <div>
-                    <Label>Volume Diolah (L/hari)</Label>
-                    {isAuto
-                      ? <ReadOnly val={avail}/>
-                      : <Inp value={diolah||''} onChange={v=>updSource(id,'volumeDiolah',v as number)} step={0.001}
-                          style={{ borderColor:over?C.red:undefined }}/>}
-                    {over && <div style={{ fontSize:10, color:C.red, marginTop:2 }}>Melebihi tersedia</div>}
-                  </div>
-                </div>
-              </div>
+              </DetailCard>
             );
-          })
-        ) : (
-          <>
-            <div style={{ display:'grid', gridTemplateColumns:'24px 1fr 160px 160px 54px', gap:6, marginBottom:5 }}>
-              {['Tag','Sumber Air','Tersedia (L/hari)','Diolah (L/hari)','Auto'].map(h=>(
-                <div key={h} style={{ fontSize:10, color:C.s300 }}>{h}</div>
+          })}
+        </div>
+      );
+    }
+
+    return (
+      <Table caption="Sumber air: volume tersedia dan diolah per hari">
+        <Thead>
+          <Tr hover={false}>
+            <Th>Sumber</Th>
+            <Th numeric>Auto</Th>
+            <Th numeric>Tersedia (L/hari)</Th>
+            <Th numeric>Diolah (L/hari)</Th>
+            <Th>Input Manual (L/hari)</Th>
+          </Tr>
+        </Thead>
+        <Tbody>
+          {sourceRows.map(src => {
+            const sourceId = src.id as WBSourceId;
+            return (
+            <Tr key={src.id}>
+              <Td>
+                <strong style={{ color: C.heading }}>{sourceLabels[sourceId]}</strong>
+              </Td>
+              <Td numeric>
+                <AutoPill
+                  on={src.auto || false}
+                  onToggle={() => handleSourceChange(sourceId, 'auto', !src.auto)}
+                  title={src.auto ? 'Klik untuk input manual' : 'Klik untuk hitung otomatis'}
+                />
+              </Td>
+              <Td numeric>
+                {src.auto ? (
+                  <ReadOnly val={src.autoValue} decimals={0} />
+                ) : (
+                  <ReadOnly val={src.autoValue} decimals={0} />
+                )}
+              </Td>
+              <Td numeric>
+                {src.auto ? (
+                  <ReadOnly val={src.autoValue} decimals={0} />
+                ) : (
+                  <NumField
+                    value={src.volumeDiolah}
+                    onChange={v => handleSourceChange(sourceId, 'volumeDiolah', v)}
+                    step={0.001}
+                    min={0}
+                    max={Math.max(0, src.autoValue)}
+                    style={{ width: 120, textAlign: 'right' }}
+                    aria-label={`Volume diolah ${sourceLabels[sourceId]}`}
+                  />
+                )}
+              </Td>
+              <Td>
+                {sourceId === 'ct_condensate' || sourceId === 'others' ? (
+                  <NumField
+                    value={src.availableManual}
+                    onChange={v => handleSourceChange(sourceId, 'availableManual', v)}
+                    step={0.001}
+                    min={0}
+                    max={1000000000}
+                    style={{ width: 120, textAlign: 'right' }}
+                    aria-label={`Input manual ${sourceLabels[sourceId]}`}
+                  />
+                ) : (
+                  <span style={{ color: C.muted, fontSize: 13 }}>—</span>
+                )}
+              </Td>
+            </Tr>
+            );
+          })}
+        </Tbody>
+      </Table>
+    );
+  };
+
+  const renderUses = () => {
+    if (isMobile) {
+      return (
+        <div style={{ display: 'grid', gap: 12 }}>
+          {useRows.map(use => {
+            const useId = use.id as WBUseId;
+            return (
+              <DetailCard key={use.id} title={useLabels[useId]} style={{ padding: 0 }}>
+                <div style={{ padding: '14px 16px', background: C.lighter, borderBottom: `1px solid ${C.line}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                  <strong style={{ color: C.heading, fontSize: 14 }}>{useLabels[useId]}</strong>
+                  <div style={{ fontFamily: 'var(--display)', fontSize: 18, fontWeight: 700, color: C.heading }}>
+                    {fmt(use.required, 0)} L/hari
+                  </div>
+                </div>
+                <div style={{ padding: '12px 16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 11, color: C.muted, marginBottom: 4, fontWeight: 500 }}>Dari Alternatif (L/hari)</label>
+                    <NumField
+                      value={use.dariAlt}
+                      onChange={v => handleUseChange(useId, 'dariAlt', v)}
+                      step={0.001}
+                      min={0}
+                      max={Math.max(0, use.required)}
+                      style={{ width: '100%', textAlign: 'right' }}
+                      aria-label={`Dari alternatif ${useLabels[useId]}`}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 11, color: C.muted, marginBottom: 4, fontWeight: 500 }}>Dari Resirkulasi (L/hari)</label>
+                    <NumField
+                      value={use.dariRecycle}
+                      onChange={v => handleUseChange(useId, 'dariRecycle', v)}
+                      step={0.001}
+                      min={0}
+                      max={Math.max(0, use.required - (use.dariAlt || 0))}
+                      style={{ width: '100%', textAlign: 'right' }}
+                      aria-label={`Dari resirkulasi ${useLabels[useId]}`}
+                    />
+                  </div>
+                </div>
+              </DetailCard>
+            );
+          })}
+        </div>
+      );
+    }
+
+    return (
+      <Table caption="Kebutuhan air: volume kebutuhan dan pemenuhan per hari">
+        <Thead>
+          <Tr hover={false}>
+            <Th>Kebutuhan</Th>
+            <Th numeric>Kebutuhan (L/hari)</Th>
+            <Th numeric>Dari Alternatif (L/hari)</Th>
+            <Th numeric>Dari Resirkulasi (L/hari)</Th>
+          </Tr>
+        </Thead>
+        <Tbody>
+          {useRows.map(use => {
+            const useId = use.id as WBUseId;
+            return (
+            <Tr key={use.id}>
+              <Td>
+                <strong style={{ color: C.heading }}>{useLabels[useId]}</strong>
+              </Td>
+              <Td numeric>
+                <ReadOnly val={use.required} decimals={0} />
+              </Td>
+              <Td numeric>
+                <NumField
+                  value={use.dariAlt}
+                  onChange={v => handleUseChange(useId, 'dariAlt', v)}
+                  step={0.001}
+                  min={0}
+                  max={Math.max(0, use.required)}
+                  style={{ width: 120, textAlign: 'right' }}
+                  aria-label={`Dari alternatif ${useLabels[useId]}`}
+                />
+              </Td>
+              <Td numeric>
+                <NumField
+                  value={use.dariRecycle}
+                  onChange={v => handleUseChange(useId, 'dariRecycle', v)}
+                  step={0.001}
+                  min={0}
+                  max={Math.max(0, use.required - (use.dariAlt || 0))}
+                  style={{ width: 120, textAlign: 'right' }}
+                  aria-label={`Dari resirkulasi ${useLabels[useId]}`}
+                />
+              </Td>
+            </Tr>
+            );
+          })}
+        </Tbody>
+      </Table>
+    );
+  };
+
+  return (
+    <div style={{ maxWidth: 1100 }}>
+      {/* Scenario Selector & Sync */}
+      <DetailCard title="Pilih Skenario" style={{ marginBottom: 16 }}>
+        <div style={{ padding: '12px 20px', borderBottom: `1px solid ${C.line}` }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 4, background: C.lighter, borderRadius: 8, padding: 4 }}>
+              {(['wet', 'dry'] as const).map(s => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setActiveScenario(s)}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: 6,
+                    border: 'none',
+                    background: activeScenario === s ? '#fff' : 'transparent',
+                    color: activeScenario === s ? C.heading : C.muted,
+                    fontFamily: 'var(--sans)',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    boxShadow: activeScenario === s ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                  }}
+                >
+                  {s === 'wet' ? '💧 Hari Basah' : '☀️ Hari Kering'}
+                </button>
               ))}
             </div>
-            {WB_SOURCE_IDS.map(id=>{
-              const meta = SOURCE_META[id];
-              const avail = availFor(id);
-              const diolah = diolahFor(id);
-              const over = diolah > avail;
-              const isAuto = autoFillSrc.has(id);
-              return (
-                <div key={id} style={{ display:'grid', gridTemplateColumns:'24px 1fr 160px 160px 54px', gap:6, marginBottom:6, alignItems:'center' }}>
-                  <span style={{ fontSize:10, padding:'2px 7px', borderRadius:10, fontWeight:700, textAlign:'center', background:TAG_STYLE[meta.tag].bg, color:TAG_STYLE[meta.tag].color }}>{meta.tag}</span>
-                  <span style={{ fontSize:13, color:C.s700 }}>{meta.label}</span>
-                  {meta.manualAvail
-                    ? <Inp value={scenario.sources.find(r=>r.id===id)?.availableManual||''} onChange={v=>updSource(id,'availableManual',v as number)} step={0.001}/>
-                    : <ReadOnly val={avail}/>}
-                  {isAuto
-                    ? <ReadOnly val={avail}/>
-                    : <div>
-                        <Inp value={diolah||''} onChange={v=>updSource(id,'volumeDiolah',v as number)} step={0.001}
-                          style={{ borderColor:over?C.red:undefined }}/>
-                        {over && <div style={{ fontSize:9, color:C.red, marginTop:2 }}>Melebihi tersedia</div>}
-                      </div>}
-                  <AutoPill on={isAuto} onToggle={()=>toggleAutoSrc(id)} title="Auto-isi Volume Diolah = Volume Tersedia"/>
-                </div>
-              );
-            })}
-          </>
-        )}
-        <div style={{ borderTop:`1px solid ${C.s200}`, paddingTop:10, marginTop:6, display:'flex', justifyContent:'flex-end', gap:24, fontSize:12 }}>
-          <span style={{ color:C.s500 }}>Total Volume Diolah:</span>
-          <span style={{ fontWeight:700, color:C.teal, fontVariantNumeric:'tabular-nums' }}>{fmt(totalDiolah,3)} L/hari</span>
-        </div>
-      </Card>
 
-      {/* ── SIDE B — USES ────────────────────────────────────────── */}
-      <Card>
-        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12, flexWrap:'wrap', gap:6 }}>
-          <SecTitle>B. Penggunaan Air Recycle &amp; Alternatif</SecTitle>
-          <div style={{ fontSize:10, color:C.s400 }}>
-            <Zap size={10} style={{ verticalAlign:'middle' }}/> Alt / Rec = diisi otomatis dari Kebutuhan
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Tog
+                on={syncScenarios}
+                onChange={setSyncScenarios}
+                label="Sinkronkan ke skenario lain"
+              />
+            </div>
           </div>
         </div>
-        {isMobile ? (
-          WB_USE_IDS.map(id=>{
-            const useRow = scenario.uses.find(r=>r.id===id)!;
-            const req = reqFor(id as WBUseId);
-            const fulfilled = (useRow.dariAlt||0)+(useRow.dariRecycle||0);
-            const fpct = req>0?fulfilled/req:0;
-            const over = fpct>1;
-            const isAutoA = autoFillAlt.has(id as WBUseId);
-            const isAutoR = autoFillRec.has(id as WBUseId);
-            return (
-              <div key={id} style={{ border:`1px solid ${C.s200}`, borderRadius:8, padding:12, marginBottom:10 }}>
-                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
-                  <span style={{ fontSize:13, fontWeight:500, color:C.s700 }}>{USE_META[id as WBUseId].label}</span>
-                  <span style={{ fontSize:11, padding:'2px 8px', borderRadius:20, fontWeight:700,
-                    background:over?'#FEF2F2':fpct>0?'#F0FDF4':C.s100, color:over?C.red:fpct>0?C.green:C.s300 }}>
-                    {fmtPct(fpct)}
+      </DetailCard>
+
+      {/* Reduction % Highlight - Prominent */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{
+          background: 'linear-gradient(135deg, var(--card) 0%, var(--lighter) 100%)',
+          border: `1px solid ${C.line}`,
+          borderRadius: 12,
+          padding: '20px 24px',
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+          gap: 24,
+          alignItems: 'center',
+        }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: C.muted, marginBottom: 8 }}>
+              Reduksi Konsumsi Primer
+            </div>
+            <div style={{ fontFamily: 'var(--display)', fontSize: 'clamp(36px, 5vw, 56px)', fontWeight: 700, color: C.accent, lineHeight: 1.1 }}>
+              {fmtPct(reductionPct)}
+            </div>
+            <div style={{ fontSize: 13, color: C.muted, marginTop: 4 }}>
+              dari total suplai {fmt(sourceTotal, 0)} L/hari
+            </div>
+          </div>
+          
+          <div style={{ borderLeft: `1px solid ${C.line}`, paddingLeft: 24, display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ width: 60, height: 60, borderRadius: '50%', border: '4px solid', borderColor: balance >= 0 ? C.accent : C.danger, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+                <div style={{ width: 44, height: 44, borderRadius: '50%', background: balance >= 0 ? C.accent : C.danger, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <span style={{ fontFamily: 'var(--display)', fontSize: 14, fontWeight: 700, color: '#fff' }}>
+                    {fmtFixed(reductionPct * 100, 0)}%
                   </span>
                 </div>
-                <div style={{ fontSize:11, color:C.s400, marginBottom:8 }}>Kebutuhan: {fmt(req,3)} L/hari</div>
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-                  <div>
-                    <div style={{ display:'flex', justifyContent:'space-between', marginBottom:3 }}>
-                      <Label>Dari Alt. (L/hari)</Label>
-                      <AutoPill on={isAutoA} onToggle={()=>toggleAutoAlt(id as WBUseId)} title="Auto: Alt = Kebutuhan"/>
-                    </div>
-                    {isAutoA ? <ReadOnly val={req}/> : <Inp value={useRow.dariAlt||''} onChange={v=>updUse(id,'dariAlt',v as number)} step={0.001}/>}
-                  </div>
-                  <div>
-                    <div style={{ display:'flex', justifyContent:'space-between', marginBottom:3 }}>
-                      <Label>Dari Recycle (L/hari)</Label>
-                      <AutoPill on={isAutoR} onToggle={()=>toggleAutoRec(id as WBUseId)} title="Auto: Rec = Kebutuhan"/>
-                    </div>
-                    {isAutoR ? <ReadOnly val={req}/> : <Inp value={useRow.dariRecycle||''} onChange={v=>updUse(id,'dariRecycle',v as number)} step={0.001}/>}
-                  </div>
-                </div>
-                {over && <div style={{ fontSize:11, color:C.red, marginTop:6 }}>⚠ Pemenuhan melebihi kebutuhan</div>}
               </div>
-            );
-          })
-        ) : (
-          <>
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 120px 54px 120px 54px 80px', gap:6, marginBottom:5 }}>
-              {['Penggunaan','Kebutuhan (L/hari)','Auto Alt','Dari Alt. (L/hari)','Auto Rec','Dari Rec (L/hari)'].map(h=>(
-                <div key={h} style={{ fontSize:10, color:C.s300 }}>{h}</div>
-              ))}
             </div>
-            {/* Extra header row for % */}
-            {WB_USE_IDS.map(id=>{
-              const useRow = scenario.uses.find(r=>r.id===id)!;
-              const req = reqFor(id as WBUseId);
-              const fulfilled = (useRow.dariAlt||0)+(useRow.dariRecycle||0);
-              const fpct = req>0?fulfilled/req:0;
-              const over = fpct>1;
-              const isAutoA = autoFillAlt.has(id as WBUseId);
-              const isAutoR = autoFillRec.has(id as WBUseId);
-              return (
-                <div key={id} style={{ display:'grid', gridTemplateColumns:'1fr 120px 54px 120px 54px 80px', gap:6, marginBottom:6, alignItems:'start' }}>
-                  <span style={{ fontSize:13, color:C.s700, paddingTop:8 }}>{USE_META[id as WBUseId].label}</span>
-                  <ReadOnly val={req}/>
-                  <div style={{ paddingTop:4 }}><AutoPill on={isAutoA} onToggle={()=>toggleAutoAlt(id as WBUseId)} title="Auto: Dari Alt = Kebutuhan"/></div>
-                  {isAutoA ? <ReadOnly val={req}/> : <Inp value={useRow.dariAlt||''} onChange={v=>updUse(id,'dariAlt',v as number)} step={0.001}/>}
-                  <div style={{ paddingTop:4 }}><AutoPill on={isAutoR} onToggle={()=>toggleAutoRec(id as WBUseId)} title="Auto: Dari Rec = Kebutuhan"/></div>
-                  {isAutoR ? <ReadOnly val={req}/> : <Inp value={useRow.dariRecycle||''} onChange={v=>updUse(id,'dariRecycle',v as number)} step={0.001}/>}
-                </div>
-              );
-            })}
-            {/* % Terpenuhi column as separate row below */}
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 120px 54px 120px 54px 80px', gap:6, marginTop:4, borderTop:`1px dashed ${C.s200}`, paddingTop:6 }}>
-              <span style={{ fontSize:11, color:C.s400 }}>% Terpenuhi</span>
-              {WB_USE_IDS.map(id=>{
-                const useRow = scenario.uses.find(r=>r.id===id)!;
-                const req = reqFor(id as WBUseId);
-                const fulfilled = (useRow.dariAlt||0)+(useRow.dariRecycle||0);
-                const fpct = req>0?fulfilled/req:0;
-                const over = fpct>1;
-                return (
-                  <React.Fragment key={id}></React.Fragment>
-                );
-              })}
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontWeight: 600, fontSize: 14, color: balance >= 0 ? C.successInk : C.dangerInk }}>
+                {balance >= 0 ? '✓ Surplus Air' : '✕ Defisit Air'}
+              </div>
+              <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>
+                {balance >= 0 ? '+' : ''}{fmt(balance, 0)} L/hari
+              </div>
             </div>
-            {/* Pct row - simpler layout */}
-            <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginTop:4 }}>
-              {WB_USE_IDS.map(id=>{
-                const useRow = scenario.uses.find(r=>r.id===id)!;
-                const req = reqFor(id as WBUseId);
-                const fulfilled = (useRow.dariAlt||0)+(useRow.dariRecycle||0);
-                const fpct = req>0?fulfilled/req:0;
-                const over = fpct>1;
-                return (
-                  <div key={id} style={{ display:'flex', alignItems:'center', gap:4, fontSize:11 }}>
-                    <span style={{ color:C.s400 }}>{USE_META[id as WBUseId].label.split(' ')[0]}:</span>
-                    <span style={{ padding:'2px 8px', borderRadius:20, fontWeight:700,
-                      background:over?'#FEF2F2':fpct>0?'#F0FDF4':C.s100, color:over?C.red:fpct>0?C.green:C.s300 }}>
-                  {fmtPct(fpct)}{over?' ⚠':''}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </>
-        )}
-        <div style={{ borderTop:`1px solid ${C.s200}`, paddingTop:10, marginTop:6, display:'flex', justifyContent:'flex-end', gap:24, fontSize:12 }}>
-          <span style={{ color:C.s500 }}>Total Pemenuhan:</span>
-          <span style={{ fontWeight:700, color:C.teal, fontVariantNumeric:'tabular-nums' }}>{fmt(totalPemenuhan,3)} L/hari</span>
-        </div>
-      </Card>
-
-      {/* ── Balance status ────────────────────────────────────────── */}
-      <div style={{
-        display:'flex', alignItems:'flex-start', gap:10, padding:'12px 16px', borderRadius:10,
-        background:overRows.length>0?'#FEF2F2':isBalanced?'#F0FDF4':'#FFF7ED',
-        border:`1px solid ${overRows.length>0?'#FCA5A5':isBalanced?'#86EFAC':'#FCD34D'}`,
-      }}>
-        {overRows.length>0||!isBalanced
-          ? <AlertCircle size={16} style={{ color:overRows.length>0?C.red:'#D97706', flexShrink:0, marginTop:1 }}/>
-          : <CheckCircle2 size={16} style={{ color:C.green, flexShrink:0, marginTop:1 }}/>}
-        <div>
-          {overRows.length>0 && (
-            <div style={{ fontSize:13, fontWeight:600, color:C.red, marginBottom:4 }}>
-              ERROR — Pemenuhan melebihi 100% pada: {overRows.map(r=>USE_META[r.id as WBUseId]?.label).join(', ')}
-            </div>
-          )}
-          {!isBalanced && overRows.length===0 && (
-            <div style={{ fontSize:13, fontWeight:600, color:'#D97706', marginBottom:4 }}>
-              NERACA TIDAK SEIMBANG — Diolah ({fmt(totalDiolah,3)}) &lt; Pemenuhan ({fmt(totalPemenuhan,3)}) L/hari
-            </div>
-          )}
-          {isBalanced && overRows.length===0 && totalDiolah>0 && (
-            <div style={{ fontSize:13, fontWeight:600, color:C.green, marginBottom:4 }}>
-              NERACA AIR SEIMBANG — Surplus: {fmt(totalDiolah-totalPemenuhan,3)} L/hari
-            </div>
-          )}
-          <div style={{ fontSize:12, color:C.s500 }}>
-            Sumber Diolah: <strong>{fmt(totalDiolah,3)} L/hari</strong> &nbsp;·&nbsp;
-            Total Pemenuhan: <strong>{fmt(totalPemenuhan,3)} L/hari</strong>
           </div>
-          {totalDiolah===0 && (
-            <div style={{ fontSize:11, color:C.s400, marginTop:4 }}>
-              Isi kolom "Volume Diolah" dan "Pemenuhan" (atau gunakan tombol Auto) untuk menyeimbangkan neraca air.
+
+          <div style={{ borderLeft: `1px solid ${C.line}`, paddingLeft: 24, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, textAlign: 'center' }}>
+            <div>
+              <div style={{ fontFamily: 'var(--display)', fontSize: 24, fontWeight: 700, color: C.info }}>{fmt(sourceTotal, 0)}</div>
+              <div style={{ fontSize: 11, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Total Sumber</div>
             </div>
-          )}
+            <div>
+              <div style={{ fontFamily: 'var(--display)', fontSize: 24, fontWeight: 700, color: C.accent }}>{fmt(useTotal, 0)}</div>
+              <div style={{ fontSize: 11, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Total Kebutuhan</div>
+            </div>
+            <div>
+              <div style={{ fontFamily: 'var(--display)', fontSize: 24, fontWeight: 700, color: balance >= 0 ? C.success : C.danger }}>{fmt(balance, 0)}</div>
+              <div style={{ fontSize: 11, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Saldo</div>
+            </div>
+          </div>
         </div>
       </div>
+
+      {/* Sources */}
+      <DetailCard
+        title="Sumber Air (Supply)"
+        icon={<Droplets size={20} />}
+        subtitle={`Total: ${fmt(sourceTotal, 0)} L/hari | Skenario: ${activeScenario === 'wet' ? '💧 Hari Basah' : '☀️ Hari Kering'}`}
+        style={{ marginBottom: 16 }}
+      >
+        {renderSources()}
+      </DetailCard>
+
+      {/* Uses */}
+      <DetailCard
+        title="Kebutuhan Air (Demand)"
+        icon={<Droplets size={20} />}
+        subtitle={`Total: ${fmt(useTotal, 0)} L/hari`}
+      >
+        {renderUses()}
+      </DetailCard>
+
+      {/* Balance Status - Condensed since we have the highlight above */}
+      <DetailCard title="Status Neraca" style={{ marginTop: 16 }}>
+        <div style={{ padding: '16px 20px' }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 16,
+            padding: 16, borderRadius: 8,
+            background: balance >= 0 ? C.successBg : C.dangerBg,
+            border: `1px solid ${balance >= 0 ? C.successLine : C.dangerLine}`,
+            color: balance >= 0 ? C.successInk : C.dangerInk,
+          }}>
+            <div style={{ fontSize: 24, fontWeight: 700, fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--display)' }}>
+              {balance >= 0 ? '+' : ''}{fmt(balance, 0)} L/hari
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 15 }}>
+                {balance >= 0 ? '✓ Surplus Air — Neraca Seimbang' : '✕ Defisit Air — Perlu Tindakan'}
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.9, marginTop: 2 }}>
+                Total Sumber: {fmt(sourceTotal, 0)} L/hari | Total Kebutuhan: {fmt(useTotal, 0)} L/hari
+              </div>
+            </div>
+            <Badge variant={balance >= 0 ? 'success' : 'danger'} size="sm">
+              {balance >= 0 ? 'SEIMBANG' : 'PERLU TINDAKAN'}
+            </Badge>
+          </div>
+        </div>
+      </DetailCard>
     </div>
   );
 }
 
-// ─── Step 6 — Hasil WAC ───────────────────────────────────────────────────────
-function Step6({ state }:{ state:AppState }) {
-  const R   = useMemo(()=>calcAll(state),[state]);
-  const d   = R.daily;
-  const tc  = TYPOLOGY_CONFIG[state.building.typology];
-  const { isMobile, isTablet } = useBreakpoint();
+// ─── Step 6: Hasil WAC ───
+function Step6({ state }: { state: AppState }) {
+  const R = calcAll(state);
+  const tc = TYPOLOGY_CONFIG[state.building.typology];
+  const whatIf = useMemo(() => buildWhatIf(state), [state]);
+  const p2Status: 'pass' | 'fail' | 'unknown' = !R.wac1.p2DataComplete
+    ? 'unknown'
+    : R.wac1.p2Pass ? 'pass' : 'fail';
 
-  const hasData = R.wac1.baselineNorm > 0;
-  const chartData = [
-    { name:'WC + Urinal',  baseline:Math.round(d.flushBL), design:Math.round(d.flushDsg) },
-    { name:'Tap + Shower', baseline:Math.round(d.tapBL),   design:Math.round(d.tapDsg)   },
-    { name:'Lansekap',     baseline:Math.round(d.lsBL),    design:Math.round(d.lsDsg)    },
-    { name:'Cooling Tower',baseline:Math.round(d.ctBL),    design:Math.round(d.ctDsg)    },
-  ];
-  const statCols = isMobile?'1fr 1fr':isTablet?'repeat(3,1fr)':'repeat(4,1fr)';
+  const wac2Max = 3;
+  const wac1Max = 8;
+  const wac2Score = R.wac2.pts;
+  const wac1Score = R.wac1.pts;
+  const wac2Pct = wac2Score / wac2Max;
+  const wac1Pct = wac1Score / wac1Max;
+  const totalScore = wac2Score + wac1Score;
+  const totalMax = wac2Max + wac1Max;
+  const totalPct = totalScore / totalMax;
+
+  // Tabs state
+  const [activeTab, setActiveTab] = useState<'wac1' | 'wac2' | 'p2' | 'summary'>('wac1');
+  const [whatIfOpen, setWhatIfOpen] = useState<'wac1' | 'wac2' | null>(null);
 
   return (
-    <div style={{ maxWidth:860, margin:'0 auto' }}>
-      {/* Hero */}
-      <div style={{ background:C.teal, borderRadius:12, padding:isMobile?16:24, marginBottom:18 }}>
-        <div style={{ fontSize:10, fontWeight:700, letterSpacing:'0.1em', textTransform:'uppercase', color:'rgba(211,254,171,0.6)', marginBottom:8 }}>
-          {state.building.name||'Proyek'} · {tc.label}
-        </div>
-        <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr':'repeat(3,1fr)', gap:isMobile?12:24 }}>
-          {[
-            ['Baseline (Dihitung)', fmt(R.wac1.baselineNorm,3), tc.resultUnit],
-            ['Konsumsi Desain (Primer)', fmt(R.wac1.designNorm,3), tc.resultUnit],
-            ['Penghematan', fmtPct(R.wac1.savingsPct), 'dari baseline'],
-          ].map(([label,val,unit])=>(
-            <div key={label}>
-              <div style={{ fontSize:10, color:'rgba(255,255,255,0.5)', marginBottom:6 }}>{label}</div>
-              <div style={{ fontSize:isMobile?20:26, fontWeight:800, color:C.mint, fontVariantNumeric:'tabular-nums' }}>{val}</div>
-              <div style={{ fontSize:10, color:'rgba(255,255,255,0.4)', marginTop:2 }}>{unit}</div>
-            </div>
-          ))}
-        </div>
-        {/* WAC P2: always pass if data filled */}
-        <div style={{ marginTop:16, display:'flex', alignItems:'flex-start', gap:8, padding:'10px 14px', background:'rgba(0,0,0,0.2)', borderRadius:8 }}>
-          {hasData
-            ? <><CheckCircle2 size={15} style={{ color:C.mint, flexShrink:0 }}/><span style={{ fontSize:13, fontWeight:600, color:C.mint }}>WAC P2 LULUS — Data baseline &amp; desain telah dihitung</span></>
-            : <><AlertCircle  size={15} style={{ color:C.amber, flexShrink:0 }}/><span style={{ fontSize:13, fontWeight:600, color:C.amber }}>WAC P2 — Lengkapi data bangunan dan fitur air untuk mendapatkan hasil</span></>}
+    <div style={{ maxWidth: 1100 }}>
+      <div className="print-only" style={{ marginBottom: 20 }}>
+        <h1 style={{ fontFamily: 'var(--display)', fontSize: 24, margin: 0 }}>Laporan Kalkulator Air GREENSHIP NB v1.3</h1>
+        <div style={{ fontSize: 13, marginTop: 4 }}>
+          {state.building.name || 'Tanpa nama'} · {tc.label} · dicetak{' '}
+          {new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })}
         </div>
       </div>
 
-      {/* WAC score cards */}
-      <div style={{ display:'grid', gridTemplateColumns:isMobile?'1fr':'1fr 1fr', gap:16, marginBottom:18 }}>
-        {[
-          { label:'WAC 1 — Pengurangan Konsumsi Air', pts:R.wac1.pts, max:8,
-            sub:`${fmtPct(R.wac1.savingsPct)} penghematan · Rasio desain/baseline: ${fmtPct(R.wac1.ratio)}` },
-          { label:'WAC 2 — Efisiensi Fitur Air (NB 1.3)', pts:R.wac2.pts, max:3,
-            sub:`${fmtPct(R.wac2.pct)} WF hemat (${R.wac2.hemat} dari ${R.wac2.total} unit)` },
-        ].map(({ label, pts, max, sub })=>(
-          <Card key={label}>
-            <div style={{ fontSize:11, fontWeight:700, color:C.s500, textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:10 }}>{label}</div>
-            <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
-              <div style={{ fontSize:44, fontWeight:800, color:C.teal, lineHeight:1 }}>{pts}</div>
-              <div style={{ fontSize:15, color:C.s300 }}>/ {max} poin</div>
+      {/* Hero Card - Animated Progress Ring + Large Score (Parkinsans) */}
+      <div style={{ background: C.heading, borderRadius: 16, padding: '32px 24px', marginBottom: 24, color: '#fff', overflow: 'hidden', position: 'relative' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 24, alignItems: 'center' }}>
+          <div style={{ position: 'relative' }}>
+            <div style={{ fontFamily: 'var(--sans)', fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: C.accentLight, marginBottom: 8 }}>
+              SKOR WAC TOTAL
             </div>
-            <div style={{ margin:'10px 0', background:C.s100, borderRadius:6, height:8, overflow:'hidden' }}>
-              <div style={{ height:'100%', background:C.mint, borderRadius:6, width:`${(pts/max)*100}%`, transition:'0.5s' }}/>
+            <div style={{ fontFamily: 'var(--display)', fontSize: 'clamp(56px, 7vw, 88px)', fontWeight: 400, lineHeight: 1.1, letterSpacing: '-1px', marginBottom: 4 }}>
+              {fmtFixed(totalScore, 1)}
             </div>
-            <div style={{ fontSize:12, color:C.s500 }}>{sub}</div>
-          </Card>
-        ))}
-      </div>
-
-      {/* Chart */}
-      <Card style={{ marginBottom:16 }}>
-        <SecTitle icon={BarChart3}>Konsumsi Air: Baseline vs. Desain (L/hari)</SecTitle>
-        <div style={{ display:'flex', gap:16, fontSize:11, marginBottom:10, flexWrap:'wrap' }}>
-          {[['#CBD5E1','Baseline'],[C.teal,'Desain']].map(([bg,lbl])=>(
-            <span key={lbl} style={{ display:'flex', alignItems:'center', gap:5, color:C.s500 }}>
-              <span style={{ width:10, height:10, borderRadius:2, background:bg, display:'inline-block' }}/>{lbl}
-            </span>
-          ))}
-        </div>
-        <div style={{ height:isMobile?200:240 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={chartData} margin={{ top:4, right:8, left:isMobile?0:10, bottom:4 }}>
-              <XAxis dataKey="name" tick={{ fontSize:isMobile?9:11, fill:C.s500 }}/>
-              <YAxis tick={{ fontSize:10, fill:C.s500 }} tickFormatter={v=>fmt(Number(v),0)} width={isMobile?40:55}/>
-              <Tooltip formatter={(v:number)=>[fmt(v,0)+' L/hari']}/>
-              <Bar dataKey="baseline" fill="#CBD5E1" radius={[4,4,0,0]}/>
-              <Bar dataKey="design"   fill={C.teal}  radius={[4,4,0,0]}/>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </Card>
-
-      {/* Stats */}
-      <div style={{ display:'grid', gridTemplateColumns:statCols, gap:12 }}>
-        {[
-          ['Total Baseline',           fmt(d.totalBL,0),                          'L/hari'],
-          ['Total Desain',             fmt(d.totalDsg,0),                          'L/hari'],
-          ['Reduksi Neraca Air',       fmt(d.totalReduction,0),                    'L/hari'],
-          ['Dari Sumber Primer',       fmt(d.totalFromPrimary,0),                  'L/hari'],
-          ['Rasio Penampungan Hujan',  fmtPct(R.rainwater.capRatio),              ''],
-          ['WAC P2',                   hasData?'LULUS':'Isi data dulu',            ''],
-          ['Baseline '+tc.resultUnit,  fmt(R.wac1.baselineNorm,3),                 tc.resultUnit],
-          ['Desain '+tc.resultUnit,    fmt(R.wac1.designNorm,3),                   tc.resultUnit],
-        ].map(([label,val,unit])=>(
-          <div key={label} style={{ background:C.s100, borderRadius:8, padding:'10px 12px' }}>
-            <div style={{ fontSize:10, color:C.s400, marginBottom:4 }}>{label}</div>
-            <div style={{ fontSize:16, fontWeight:700, color:C.teal, fontVariantNumeric:'tabular-nums' }}>{val}</div>
-            {unit && <div style={{ fontSize:10, color:C.s300 }}>{unit}</div>}
+            <div style={{ fontSize: 14, color: C.accentLight }}>
+              dari {totalMax} poin maksimum
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
+              <Badge variant="success" size="sm">WAC 2: {fmtFixed(wac2Score, 1)}/{wac2Max}</Badge>
+              <Badge variant="info" size="sm">WAC 1: {fmtFixed(wac1Score, 1)}/{wac1Max}</Badge>
+              <Badge variant={p2Status === 'pass' ? 'success' : p2Status === 'fail' ? 'warning' : 'info'} size="sm">
+                WAC P2: {p2Status === 'pass' ? 'LULUS' : p2Status === 'fail' ? 'BELUM TERPENUHI' : 'DATA BELUM LENGKAP'}
+              </Badge>
+            </div>
           </div>
-        ))}
+
+          {/* Progress Ring - Hero Visual */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end', justifyContent: 'center', minHeight: 180 }}>
+            <div style={{ position: 'relative', width: 160, height: 160 }}>
+              <svg width="160" height="160" viewBox="0 0 160 160" style={{ transform: 'rotate(-90deg)' }}>
+                {/* Background ring */}
+                <circle
+                  cx="80" cy="80" r="70"
+                  fill="none"
+                  stroke="rgba(255,255,255,0.15)"
+                  strokeWidth="12"
+                />
+                {/* Progress ring */}
+                <circle
+                  cx="80" cy="80" r="70"
+                  fill="none"
+                  stroke={C.accent}
+                  strokeWidth="12"
+                  strokeLinecap="round"
+                  strokeDasharray={2 * Math.PI * 70}
+                  strokeDashoffset={2 * Math.PI * 70 * (1 - totalPct)}
+                  style={{ transition: 'stroke-dashoffset 1s ease-out', filter: 'drop-shadow(0 4px 12px rgba(95,178,92,0.4))' }}
+                />
+              </svg>
+              <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ fontFamily: 'var(--display)', fontSize: 36, fontWeight: 600, color: C.accent }}>
+                  {fmtPct(totalPct)}
+                </div>
+                <div style={{ fontSize: 11, color: C.accentLight, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                  Pencapaian
+                </div>
+              </div>
+            </div>
+            <Progress value={totalPct * 100} variant="primary" height={10} style={{ width: '100%', maxWidth: 300 }} />
+          </div>
+        </div>
       </div>
+
+      {/* Tabs Navigation */}
+      <DetailCard title="Navigasi Hasil" style={{ marginBottom: 16, padding: 0 }}>
+        <div style={{ display: 'flex', borderBottom: `1px solid ${C.line}`, overflowX: 'auto' }}>
+          {[
+            { id: 'wac1', label: 'WAC 1: Konsumsi', icon: <BarChart3 size={16} /> },
+            { id: 'wac2', label: 'WAC 2: Efisiensi', icon: <Award size={16} /> },
+            { id: 'p2', label: 'Prasyarat P2', icon: <CloudRain size={16} /> },
+            { id: 'summary', label: 'Ringkasan Eksekutif', icon: <Link2 size={16} /> },
+          ].map(tab => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id as typeof activeTab)}
+              style={{
+                padding: '14px 20px',
+                border: 'none',
+                background: activeTab === tab.id ? '#fff' : 'transparent',
+                color: activeTab === tab.id ? C.heading : C.muted,
+                fontFamily: 'var(--sans)',
+                fontSize: 13,
+                fontWeight: activeTab === tab.id ? 600 : 500,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                whiteSpace: 'nowrap',
+                borderBottom: activeTab === tab.id ? `3px solid ${C.cta}` : 'none',
+                marginBottom: '-1px',
+                transition: 'color 0.15s, background 0.15s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.color = C.heading}
+              onMouseLeave={e => e.currentTarget.style.color = activeTab === tab.id ? C.heading : C.muted}
+            >
+              {tab.icon}
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </DetailCard>
+
+      {/* Tab Panels */}
+      {activeTab === 'wac1' && (
+        <DetailCard
+          title="WAC 1: Konsumsi Air Bangunan"
+          icon={<BarChart3 size={20} />}
+          subtitle={`Poin: ${fmtFixed(wac1Score, 1)} / ${wac1Max} | Unit: ${tc.resultUnit}`}
+          style={{ marginBottom: 16 }}
+        >
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
+            <div style={{ background: C.lighter, borderRadius: 8, padding: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.muted, marginBottom: 4 }}>Skor WAC 1</div>
+              <div style={{ fontFamily: 'var(--display)', fontSize: 32, fontWeight: 700, color: C.heading, fontVariantNumeric: 'tabular-nums' }}>{fmtFixed(wac1Score, 1)}</div>
+              <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>dari {wac1Max}</div>
+            </div>
+            <div style={{ background: C.lighter, borderRadius: 8, padding: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.muted, marginBottom: 4 }}>Persentase</div>
+              <div style={{ fontFamily: 'var(--display)', fontSize: 32, fontWeight: 700, color: C.accent, fontVariantNumeric: 'tabular-nums' }}>{fmtPct(wac1Pct)}</div>
+            </div>
+            <div style={{ background: C.lighter, borderRadius: 8, padding: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.muted, marginBottom: 4 }}>Baseline</div>
+              <div style={{ fontFamily: 'var(--display)', fontSize: 24, fontWeight: 700, color: C.heading, fontVariantNumeric: 'tabular-nums' }}>{fmtFixed(R.wac1.baselineNorm, 3)} {tc.resultUnit}</div>
+            </div>
+            <div style={{ background: C.lighter, borderRadius: 8, padding: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.muted, marginBottom: 4 }}>Desain</div>
+              <div style={{ fontFamily: 'var(--display)', fontSize: 24, fontWeight: 700, color: C.accent, fontVariantNumeric: 'tabular-nums' }}>{fmtFixed(R.wac1.designNorm, 3)} {tc.resultUnit}</div>
+            </div>
+            <div style={{ background: C.lighter, borderRadius: 8, padding: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.muted, marginBottom: 4 }}>Pengurangan</div>
+              <div style={{ fontFamily: 'var(--display)', fontSize: 24, fontWeight: 700, color: C.success, fontVariantNumeric: 'tabular-nums' }}>{fmtPct(R.wac1.savingsPct)}</div>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 24 }}>
+            <Label>Perbandingan Konsumsi (Baseline vs Desain)</Label>
+            <div style={{ height: 280, marginTop: 16 }}>
+              <React.Suspense fallback={<div style={{ height: '100%', display: 'grid', placeItems: 'center', color: C.muted, fontSize: 13 }}>Memuat grafik…</div>}>
+                <WacComparisonChart
+                  data={[
+                    { name: 'Flush', baseline: R.daily.flushBL, design: R.daily.flushDsg },
+                    { name: 'Tap', baseline: R.daily.tapBL, design: R.daily.tapDsg },
+                    { name: 'Lansekap', baseline: R.daily.lsBL, design: R.daily.lsDsg },
+                    { name: 'Cooling Tower', baseline: R.daily.ctBL, design: R.daily.ctDsg },
+                    { name: 'Total', baseline: R.daily.totalBL, design: R.daily.totalDsg },
+                  ]}
+                  unit={tc.resultUnit}
+                />
+              </React.Suspense>
+            </div>
+          </div>
+        </DetailCard>
+      )}
+
+      {activeTab === 'wac2' && (
+        <DetailCard
+          title="WAC 2: Efisiensi Peralatan"
+          icon={<Award size={20} />}
+          subtitle={`Poin: ${fmtFixed(wac2Score, 1)} / ${wac2Max}`}
+          style={{ marginBottom: 16 }}
+        >
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
+            <div style={{ background: C.lighter, borderRadius: 8, padding: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.muted, marginBottom: 4 }}>Skor WAC 2</div>
+              <div style={{ fontFamily: 'var(--display)', fontSize: 32, fontWeight: 700, color: C.heading, fontVariantNumeric: 'tabular-nums' }}>{fmtFixed(wac2Score, 1)}</div>
+              <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>dari {wac2Max}</div>
+            </div>
+            <div style={{ background: C.lighter, borderRadius: 8, padding: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.muted, marginBottom: 4 }}>Persentase</div>
+              <div style={{ fontFamily: 'var(--display)', fontSize: 32, fontWeight: 700, color: C.accent, fontVariantNumeric: 'tabular-nums' }}>{fmtPct(wac2Pct)}</div>
+            </div>
+            <div style={{ background: C.lighter, borderRadius: 8, padding: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.muted, marginBottom: 4 }}>Produk Hemat</div>
+              <div style={{ fontFamily: 'var(--display)', fontSize: 32, fontWeight: 700, color: C.success, fontVariantNumeric: 'tabular-nums' }}>{R.wac2.hemat}</div>
+              <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>dari {R.wac2.total} produk</div>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 16 }}>
+            <Label>Detail Per Jenis Peralatan</Label>
+            <Table caption="Detail WAC 2 per jenis peralatan">
+              <Thead>
+                <Tr hover={false}>
+                  <Th>Jenis</Th>
+                  <Th numeric>Baseline</Th>
+                  <Th numeric>Desain (Rata-rata)</Th>
+                  <Th numeric>Produk Hemat</Th>
+                  <Th numeric>Total Produk</Th>
+                  <Th>Status</Th>
+                </Tr>
+              </Thead>
+              <Tbody>
+                {(Object.keys(state.fixtures) as FixtureTypeId[]).map(type => {
+                  const bl = FIXTURE_BASELINES[type]?.baseline ?? 0;
+                  const products = state.fixtures[type];
+                  const total = products.reduce((s, p) => s + (p.qty || 0), 0);
+                  const hemat = products.reduce((s, p) => s + ((p.qty > 0 && p.rate > 0 && p.rate <= bl) ? p.qty : 0), 0);
+                  const avgDesign = total > 0 ? products.reduce((s, p) => s + (p.qty || 0) * (p.rate || 0), 0) / total : 0;
+                  const allEfficient = total > 0 && hemat === total;
+                  return (
+                    <Tr key={type}>
+                      <Td><strong style={{ color: C.heading }}>{FIXTURE_BASELINES[type]?.labelId || type}</strong></Td>
+                      <Td numeric><ReadOnly val={bl} decimals={3} /></Td>
+                      <Td numeric><ReadOnly val={avgDesign} decimals={3} /></Td>
+                      <Td numeric><ReadOnly val={hemat} decimals={0} /></Td>
+                      <Td numeric><ReadOnly val={total} decimals={0} /></Td>
+                      <Td>
+                        {total === 0
+                          ? <span style={{ fontSize: 12, color: C.muted }}>Tidak terpasang</span>
+                          : <StatusChip label={allEfficient ? 'Semua Hemat' : 'Ada Boros'} good={allEfficient} />}
+                      </Td>
+                    </Tr>
+                  );
+                })}
+              </Tbody>
+            </Table>
+          </div>
+        </DetailCard>
+      )}
+
+      {activeTab === 'p2' && (
+        <DetailCard
+          title="WAC P2: Prasyarat Air Hujan"
+          icon={<CloudRain size={20} />}
+          style={{ marginBottom: 16 }}
+        >
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 16,
+            padding: 16, borderRadius: 8,
+            background: p2Status === 'pass' ? C.successBg : p2Status === 'unknown' ? C.lighter : C.warningBg,
+            border: `1px solid ${p2Status === 'pass' ? C.successLine : p2Status === 'unknown' ? C.line : C.warningLine}`,
+            color: p2Status === 'pass' ? C.successInk : p2Status === 'unknown' ? C.body : C.warningInk,
+          }}>
+            <div style={{ fontSize: 32 }}>{p2Status === 'pass' ? '✓' : p2Status === 'unknown' ? '?' : '⚠'}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 16 }}>
+                {p2Status === 'pass' ? 'Prasyarat Terpenuhi' : p2Status === 'unknown' ? 'Belum bisa dinilai' : 'Prasyarat Belum Terpenuhi'}
+              </div>
+              <div style={{ fontSize: 13, opacity: 0.9, marginTop: 2 }}>
+                Rasio penampungan air hujan: <strong>{fmtPct(R.rainwater.capRatio)}</strong> (minimum 10% dari volume ideal).
+                {p2Status === 'unknown' && ' Lengkapi data bangunan dan peralatan terlebih dahulu.'}
+              </div>
+            </div>
+            <Badge variant={p2Status === 'pass' ? 'success' : p2Status === 'fail' ? 'warning' : 'info'} size="sm">
+              {p2Status === 'pass' ? 'LULUS' : p2Status === 'fail' ? 'PERLU PERBAIKAN' : 'DATA BELUM LENGKAP'}
+            </Badge>
+          </div>
+
+          <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+            <Pill val={fmt(R.rainwater.idealVolume, 0)} label="Potensial Tahunan" unit="L/tahun" accent={C.info} />
+            <Pill val={fmt(R.rainwater.availWet, 0)} label="Volume Disuplai" unit="L/hari" accent={C.accent} />
+            <Pill val={fmtPct(R.rainwater.capRatio)} label="Rasio Penampungan" accent={R.rainwater.capRatio >= 0.1 ? C.accent : C.warning} />
+            <Pill val={fmt(whatIf.tankTargetL, 0)} label="Tangki Minimal (10%)" unit="L" accent={C.heading} />
+          </div>
+
+          {p2Status === 'fail' && whatIf.tankMissingL > 0 && (
+            <div style={{ marginTop: 12, fontSize: 13, color: C.warningInk, lineHeight: 1.6 }}>
+              Tambahkan kapasitas tangki <strong>{fmt(whatIf.tankMissingL, 0)} L</strong> (dari{' '}
+              {fmt(state.rainwater.tankCapacity, 0)} L menjadi minimal {fmt(whatIf.tankTargetL, 0)} L) di Langkah 4.
+            </div>
+          )}
+        </DetailCard>
+      )}
+
+      {activeTab === 'summary' && (
+        <DetailCard
+          title="Ringkasan Eksekutif"
+          icon={<Link2 size={20} />}
+        >
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16 }}>
+            <div style={{ background: C.lighter, borderRadius: 8, padding: 16 }}>
+              <h4 style={{ margin: '0 0 12px 0', fontSize: 14, fontWeight: 600, color: C.heading }}>Informasi Bangunan</h4>
+              <div style={{ fontSize: 13, lineHeight: 1.8, color: C.body }}>
+                <div><strong>Nama:</strong> {state.building.name || '—'}</div>
+                <div><strong>Tipologi:</strong> {TYPOLOGY_CONFIG[state.building.typology].label}</div>
+                <div><strong>Luas Lantai Nett:</strong> {fmt(state.building.nla, 0)} m²</div>
+                <div><strong>Penghuni Utama:</strong> {fmt(state.building.occupant1, 0)} orang</div>
+                <div><strong>Penghuni Sekunder:</strong> {fmt(state.building.occupant2, 0)} orang</div>
+                <div><strong>Jam Operasional:</strong> {fmt(state.building.opHours, 1)} jam/hari</div>
+              </div>
+            </div>
+            <div style={{ background: C.lighter, borderRadius: 8, padding: 16 }}>
+              <h4 style={{ margin: '0 0 12px 0', fontSize: 14, fontWeight: 600, color: C.heading }}>Hasil Akhir</h4>
+              <div style={{ fontSize: 13, lineHeight: 1.8, color: C.body }}>
+                <div><strong>Total Skor WAC:</strong> <span style={{ color: C.heading, fontWeight: 700 }}>{fmtFixed(totalScore, 1)} / {totalMax}</span></div>
+                <div><strong>Persentase:</strong> <span style={{ color: C.accent, fontWeight: 700 }}>{fmtPct(totalPct)}</span></div>
+                <div><strong>WAC 2 (Efisiensi):</strong> {fmtFixed(wac2Score, 1)} / {wac2Max}</div>
+                <div><strong>WAC 1 (Konsumsi):</strong> {fmtFixed(wac1Score, 1)} / {wac1Max}</div>
+                <div><strong>WAC P2 (Air Hujan):</strong> {p2Status === 'pass' ? 'LULUS' : p2Status === 'fail' ? 'BELUM TERPENUHI' : 'DATA BELUM LENGKAP'}</div>
+                <div><strong>Unit Normalisasi:</strong> {tc.resultUnit}</div>
+              </div>
+            </div>
+          </div>
+        </DetailCard>
+      )}
+
+      {/* What-if Suggestions - Accordion Cards */}
+      <DetailCard
+        title="Peluang Perbaikan"
+        icon={<Zap size={20} />}
+        subtitle="Perubahan terkecil yang menaikkan poin"
+        style={{ marginBottom: 16 }}
+      >
+        {/* WAC 1 What-if */}
+        <details style={{ border: `1px solid ${C.line}`, borderRadius: 8, overflow: 'hidden', marginBottom: 12 }} open={whatIfOpen === 'wac1'} onToggle={() => setWhatIfOpen(whatIfOpen === 'wac1' ? null : 'wac1')}>
+          <summary style={{
+            padding: '14px 16px',
+            background: C.lighter,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            fontWeight: 600,
+            fontSize: 14,
+            color: C.heading,
+            listStyle: 'none',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <BarChart3 size={18} style={{ color: C.brand }} />
+              <span>WAC 1: Konsumsi Air Bangunan</span>
+            </div>
+            <span style={{ fontFamily: 'var(--display)', fontSize: 18, fontWeight: 700, color: whatIf.wac1.targetRatio === null ? C.success : C.accent }}>
+              {whatIf.wac1.targetRatio === null ? 'Maksimum (8 poin)' : `Target: ${fmtFixed(whatIf.wac1.targetRatio, 2)} untuk ${whatIf.wac1.targetPts} poin`}
+            </span>
+          </summary>
+          <div style={{ padding: '16px', background: '#fff' }}>
+            {whatIf.wac1.targetRatio === null ? (
+              <div style={{ fontSize: 13, color: C.successInk }}>Sudah di skor maksimum (8 poin).</div>
+            ) : (
+              <div style={{ fontSize: 13, lineHeight: 1.7, color: C.body }}>
+                <div>
+                  Rasio desain saat ini: <strong>{fmtFixed(whatIf.wac1.currentRatio, 3)}</strong> → perlu{' '}
+                  <strong>{fmtFixed(whatIf.wac1.targetRatio, 2)}</strong> untuk {whatIf.wac1.targetPts} poin.
+                </div>
+                <div style={{ marginTop: 6 }}>
+                  Kurangi <strong>{fmt(whatIf.wac1.reductionLpd, 0)} L/hari</strong> ({fmtPct(whatIf.wac1.reductionPct)} dari suplai primer).
+                </div>
+                <div style={{ marginTop: 12, padding: 12, background: C.infoBg, borderRadius: 8, border: `1px solid ${C.info}`, fontSize: 12, color: C.infoInk }}>
+                  <strong>Saran:</strong> Fokus pada peralatan dengan konsumsi tertinggi (biasanya Flushing WC & Keran). 
+                  Pertimbangkan ganti ke peralatan dengan rating WELS lebih tinggi atau kurangi frekuensi penggunaan melalui sensor/otomatisasi.
+                </div>
+              </div>
+            )}
+          </div>
+        </details>
+
+        {/* WAC 2 What-if */}
+        <details style={{ border: `1px solid ${C.line}`, borderRadius: 8, overflow: 'hidden' }} open={whatIfOpen === 'wac2'} onToggle={() => setWhatIfOpen(whatIfOpen === 'wac2' ? null : 'wac2')}>
+          <summary style={{
+            padding: '14px 16px',
+            background: C.lighter,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            fontWeight: 600,
+            fontSize: 14,
+            color: C.heading,
+            listStyle: 'none',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Award size={18} style={{ color: C.cta }} />
+              <span>WAC 2: Efisiensi Peralatan</span>
+            </div>
+            <span style={{ fontFamily: 'var(--display)', fontSize: 18, fontWeight: 700, color: whatIf.wac2.length === 0 ? C.success : C.warning }}>
+              {whatIf.wac2.length === 0 ? 'Semua Efisien' : `${whatIf.wac2.length} tipe di atas baseline`}
+            </span>
+          </summary>
+          <div style={{ padding: '16px', background: '#fff' }}>
+            {whatIf.wac2.length === 0 ? (
+              <div style={{ fontSize: 13, color: C.successInk }}>Semua peralatan sudah pada atau di bawah baseline.</div>
+            ) : (
+              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.6, color: C.body }}>
+                {whatIf.wac2.map(o => (
+                  <li key={o.type} style={{ marginBottom: 8 }}>
+                    <strong>{o.label}</strong>: rata-rata <strong>{fmtFixed(o.avgRate, 1)}</strong> → baseline <strong>{fmtFixed(o.baseline, 1)}</strong> {o.unit}
+                    {' '}pada <strong>{fmt(o.unitsAbove, 0)}</strong> unit
+                    {o.ptsGain > 0 ? ` → <strong style={{color: C.success}}>+${o.ptsGain} poin WAC 2</strong>` : ' (perbaikan tidak menambah poin langsung)'}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </details>
+      </DetailCard>
     </div>
   );
 }
 
-// ─── Sidebar ──────────────────────────────────────────────────────────────────
+// ─── Notification Component ───
+function Notif({ type, msgs, onClose }: { type: 'ok' | 'err' | 'warn'; msgs: string[]; onClose: () => void }) {
+  return (
+    <div className={`notif notif-${type === 'ok' ? 'success' : type === 'err' ? 'error' : 'warning'}`} role="alert">
+      <div style={{ flex: 1 }}>
+        {msgs.map((m, i) => (
+          <div key={i} style={{ marginBottom: i < msgs.length - 1 ? 6 : 0 }}>{m}</div>
+        ))}
+      </div>
+      <button onClick={onClose} type="button" style={{
+        background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer',
+        fontSize: 18, lineHeight: 1, padding: 0, opacity: 0.7,
+      }} onMouseEnter={e => e.currentTarget.style.opacity = '1'} onMouseLeave={e => e.currentTarget.style.opacity = '0.7'}>
+        ×
+      </button>
+    </div>
+  );
+}
+
+// ─── Completeness banner ───
+function IssueBanner({ issues, onJump }: { issues: ValidationIssue[]; onJump: (step: number) => void }) {
+  if (issues.length === 0) return null;
+  const errors = issues.filter(i => i.level === 'error');
+  const shown = issues.slice(0, 4);
+  const tone = errors.length > 0
+    ? { bg: C.dangerBg, line: C.dangerLine, ink: C.dangerInk }
+    : { bg: C.warningBg, line: C.warningLine, ink: C.warningInk };
+
+  return (
+    <div
+      className="no-print"
+      style={{ background: tone.bg, border: `1px solid ${tone.line}`, color: tone.ink, borderRadius: 10, padding: '10px 14px', marginBottom: 16, fontSize: 13 }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, marginBottom: 6 }}>
+        <AlertTriangle size={15} />
+        {errors.length > 0 ? `${errors.length} hal wajib dilengkapi` : 'Beberapa data belum lengkap'}
+      </div>
+      <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.55 }}>
+        {shown.map((issue, i) => (
+          <li key={i}>
+            {issue.message}{' '}
+            <button
+              type="button"
+              onClick={() => onJump(issue.step)}
+              style={{ background: 'none', border: 0, padding: 0, color: 'inherit', textDecoration: 'underline', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
+            >
+              Langkah {issue.step}
+            </button>
+          </li>
+        ))}
+        {issues.length > shown.length && (
+          <li style={{ listStyle: 'none', opacity: 0.8 }}>+{issues.length - shown.length} lainnya</li>
+        )}
+      </ul>
+    </div>
+  );
+}
+
+// ─── Sidebar ───
 function Sidebar({ step, setStep, R, state,
   onImportJSON, onExportJSON, onResetAll,
   open, onClose }:
-  { step:number; setStep:(n:number)=>void; R:ReturnType<typeof calcAll>;
-    state:AppState; onImportJSON:()=>void;
-    onExportJSON:()=>void; onResetAll:()=>void;
-    open:boolean; onClose:()=>void }) {
+  { step: number; setStep: (n: number) => void; R: ReturnType<typeof calcAll>;
+    state: AppState; onImportJSON: () => void;
+    onExportJSON: () => void; onResetAll: () => void;
+    open: boolean; onClose: () => void }) {
   const { isDesktop } = useBreakpoint();
 
   const inner = (
-    <div style={{ display:'flex', flexDirection:'column', height:'100%', background:C.teal }}>
-      <div style={{ padding:'22px 18px 16px', borderBottom:'1px solid rgba(255,255,255,0.08)' }}>
-        <div style={{ fontSize:9, color:C.mint, fontWeight:700, letterSpacing:'0.12em', textTransform:'uppercase', marginBottom:4 }}>GREENSHIP NB v1.3</div>
-        <div style={{ fontSize:17, fontWeight:800, color:C.white, lineHeight:1.2 }}>Kalkulator Air</div>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '24px 20px', overflowY: 'auto' }}>
+      <div style={{ marginBottom: 32 }}>
+        <div style={{ fontFamily: 'var(--sans)', fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: C.accentLight, marginBottom: 4 }}>
+          GREENSHIP NB v1.3
+        </div>
+        <div style={{ fontFamily: 'var(--display)', fontSize: 22, fontWeight: 400, lineHeight: 1.2, color: '#fff' }}>
+          Kalkulator Air
+        </div>
         {state.building.name && (
-          <div style={{ marginTop:10, fontSize:11, color:'rgba(255,255,255,0.4)', fontStyle:'italic', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+          <div style={{ fontFamily: 'var(--sans)', fontSize: 13, color: C.accentLight, marginTop: 8, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.15)' }}>
             {state.building.name}
           </div>
         )}
       </div>
-      <nav style={{ flex:1, padding:'8px 10px', overflowY:'auto' }}>
-        {STEPS.map(s=>{
-          const active=step===s.id, done=step>s.id, Ic=s.icon;
+      <nav style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 24 }}>
+        {STEPS.map(s => {
+          const active = step === s.id, done = step > s.id, Ic = s.icon;
           return (
-            <div key={s.id} onClick={()=>{ setStep(s.id); if(!isDesktop) onClose(); }}
-              style={{ display:'flex', alignItems:'center', gap:9, padding:'9px 10px', borderRadius:8, marginBottom:2, cursor:'pointer',
-                background:active?C.mint:done?'rgba(211,254,171,0.1)':'transparent', transition:'0.15s' }}>
-              <Ic size={14} style={{ color:active?C.teal:done?C.mint:'rgba(255,255,255,0.3)', flexShrink:0 }}/>
-              <span style={{ fontSize:12, fontWeight:active?700:done?500:400, color:active?C.teal:done?'rgba(255,255,255,0.7)':'rgba(255,255,255,0.35)' }}>{s.label}</span>
-              {done && <CheckCircle2 size={11} style={{ color:C.mint, marginLeft:'auto' }}/>}
-            </div>
+            <button
+              key={s.id}
+              onClick={() => { setStep(s.id); if (!isDesktop) onClose(); }}
+              type="button"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 12,
+                width: '100%', padding: '12px 14px',
+                borderRadius: 8, border: 0,
+                background: active ? '#fff' : done ? 'transparent' : 'transparent',
+                color: active ? C.heading : done ? C.accentLight : '#fff',
+                fontFamily: 'var(--sans)', fontSize: 14, fontWeight: active ? 600 : 500,
+                textAlign: 'left', cursor: 'pointer', transition: 'background 0.15s, color 0.15s',
+              }}
+              onMouseEnter={e => {
+                if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
+              }}
+              onMouseLeave={e => {
+                if (!active) e.currentTarget.style.background = done ? 'transparent' : 'transparent';
+              }}
+            >
+              <Ic size={15} style={{ color: active ? C.heading : done ? C.accent : '#fff' }} />
+              <span>{s.label}</span>
+              {done && <CheckCircle2 size={12} style={{ color: C.accent }} />}
+            </button>
           );
         })}
       </nav>
-      {/* Live score */}
-      <div style={{ margin:'8px 12px', padding:12, background:'rgba(0,0,0,0.2)', borderRadius:8 }}>
-        <div style={{ fontSize:10, color:'rgba(255,255,255,0.4)', marginBottom:8, textTransform:'uppercase', letterSpacing:'0.06em' }}>Nilai Sementara</div>
-        <div style={{ display:'flex', justifyContent:'space-between', textAlign:'center' }}>
-          {[{l:'WAC 2',v:R.wac2.pts,mx:'/3'},{l:'WAC 1',v:R.wac1.pts,mx:'/8'},{l:'WAC P2',v:R.wac1.p2Pass?'✓':'—',mx:''}].map(({l,v,mx})=>(
-            <div key={l}>
-              <div style={{ fontSize:20, fontWeight:800, color:l==='WAC P2'?C.mint:C.mint }}>{v}</div>
-              <div style={{ fontSize:8, color:'rgba(255,255,255,0.35)' }}>{l}{mx}</div>
+      <div style={{
+        background: 'rgba(255,255,255,0.08)', borderRadius: 12, padding: 16, marginBottom: 24
+      }}>
+        <div style={{ fontFamily: 'var(--sans)', fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: C.accentLight, marginBottom: 12 }}>
+          Nilai Sementara
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+          {[
+            { l: 'WAC 2', v: R.wac2.pts, mx: '/3' },
+            { l: 'WAC 1', v: R.wac1.pts, mx: '/8' },
+            { l: 'WAC P2', v: R.wac1.p2Pass ? '✓' : '—', mx: '' },
+          ].map(({ l, v, mx }) => (
+            <div key={l} style={{ textAlign: 'center' }}>
+              <div style={{ fontFamily: 'var(--display)', fontSize: 24, fontWeight: 600, color: '#fff', lineHeight: 1 }}>{v}</div>
+              <div style={{ fontFamily: 'var(--sans)', fontSize: 11, color: C.accentLight, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{l}{mx}</div>
             </div>
           ))}
         </div>
       </div>
-      {/* Import / Export */}
-      <div style={{ padding:'10px 12px', borderTop:'1px solid rgba(255,255,255,0.08)' }}>
-        <div style={{ fontSize:9, color:'rgba(255,255,255,0.3)', textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:8 }}>Data Proyek</div>
-        <div style={{ display:'grid', gap:6 }}>
-          <button onClick={onImportJSON} style={{
-            width:'100%', display:'flex', alignItems:'center', justifyContent:'center', gap:5,
-            padding:'7px 0', borderRadius:6, border:'1px solid rgba(255,255,255,0.2)',
-            background:'transparent', color:'rgba(255,255,255,0.7)', fontSize:10, cursor:'pointer', fontFamily:'inherit'
-          }}>
-            <Upload size={10}/> Impor JSON
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ fontFamily: 'var(--sans)', fontSize: 11, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: C.accentLight, marginBottom: 12 }}>
+          Data Proyek
+        </div>
+        <div style={{ display: 'grid', gap: 6 }}>
+          <button type="button" onClick={onImportJSON} style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            width: '100%', padding: '10px 14px', borderRadius: 8,
+            border: '1px solid rgba(255,255,255,0.2)', background: 'transparent',
+            color: '#fff', fontFamily: 'var(--sans)', fontSize: 13, fontWeight: 500,
+            cursor: 'pointer', transition: 'background 0.15s, border-color 0.15s',
+          }} onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.4)'; }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)'; }}>
+            <Upload size={12} /> Impor JSON
           </button>
-          <button onClick={onExportJSON} style={{
-            width:'100%', display:'flex', alignItems:'center', justifyContent:'center', gap:5,
-            padding:'7px 0', borderRadius:6, border:'1px solid rgba(211,254,171,0.4)',
-            background:'rgba(211,254,171,0.08)', color:'rgba(211,254,171,0.75)',
-            fontSize:10, cursor:'pointer', fontFamily:'inherit', fontWeight:700,
-          }}>
-            <Download size={10}/> Ekspor JSON
+          <button type="button" onClick={onExportJSON} style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            width: '100%', padding: '10px 14px', borderRadius: 8,
+            background: C.cta, border: `1px solid ${C.cta}`,
+            color: C.ctaText, fontFamily: 'var(--sans)', fontSize: 13, fontWeight: 600,
+            cursor: 'pointer', transition: 'background 0.15s',
+          }} onMouseEnter={e => e.currentTarget.style.background = C.ctaHover} onMouseLeave={e => e.currentTarget.style.background = C.cta}>
+            <Download size={12} /> Ekspor JSON
           </button>
-          <button onClick={onResetAll} style={{
-            width:'100%', display:'flex', alignItems:'center', justifyContent:'center', gap:5,
-            padding:'7px 0', borderRadius:6, border:'1px solid rgba(255,255,255,0.18)',
-            background:'rgba(255,255,255,0.04)', color:'rgba(255,255,255,0.62)',
-            fontSize:10, cursor:'pointer', fontFamily:'inherit',
-          }}>
-            <Trash2 size={10}/> Reset Data
+          <button type="button" onClick={onResetAll} style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            width: '100%', padding: '10px 14px', borderRadius: 8,
+            border: '1px solid rgba(255,255,255,0.2)', background: 'transparent',
+            color: '#fff', fontFamily: 'var(--sans)', fontSize: 13, fontWeight: 500,
+            cursor: 'pointer', transition: 'background 0.15s, border-color 0.15s',
+          }} onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.4)'; }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)'; }}>
+            <Trash2 size={12} /> Reset Data
           </button>
         </div>
-        <div style={{ fontSize:9, color:'rgba(255,255,255,0.25)', marginTop:8 }}>
-          Format data proyek yang didukung saat ini: JSON.
+        <div style={{ fontFamily: 'var(--sans)', fontSize: 11, color: C.accentLight, marginTop: 12, opacity: 0.7 }}>
+          Format data proyek yang didukung: JSON
         </div>
       </div>
-      <div style={{ padding:'6px 16px 10px', fontSize:9, color:'rgba(255,255,255,0.2)' }}>
+      <div style={{ fontFamily: 'var(--sans)', fontSize: 11, color: C.accentLight, opacity: 0.5, marginTop: 'auto' }}>
         Pilot: KANTOR · Phase 1
       </div>
     </div>
   );
 
-  if (isDesktop) return <div style={{ width:230, flexShrink:0, height:'100vh', position:'sticky', top:0 }}>{inner}</div>;
+  if (isDesktop) return <div style={{ position: 'fixed', top: 0, left: 0, bottom: 0, width: 280, background: C.heading, color: '#fff', zIndex: 40, display: 'flex', flexDirection: 'column' }}>{inner}</div>;
   if (!open) return null;
   return (
     <>
-      <div onClick={onClose} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', zIndex:998 }}/>
-      <div style={{ position:'fixed', top:0, left:0, bottom:0, width:230, zIndex:999 }}>{inner}</div>
+      <button aria-label="Tutup menu" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.3)', zIndex: 35, border: 'none' }} onClick={onClose} type="button" />
+      <div style={{ position: 'fixed', top: 0, left: 0, bottom: 0, width: 280, background: C.heading, color: '#fff', zIndex: 40, display: 'flex', flexDirection: 'column' }}>{inner}</div>
     </>
   );
 }
 
-// ─── Main App ─────────────────────────────────────────────────────────────────
-const STORAGE_KEY = 'greenship-wac-calculator-state-v1';
-
-function asRecord(v: unknown): Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v) ? v as Record<string, unknown> : {};
-}
-
-function mergeStoredState(raw: unknown): AppState {
-  const base = createDefaultState();
-  const stored = asRecord(raw);
-  const stateLike = asRecord(stored.state ?? stored);
-  const building = asRecord(stateLike.building);
-  const fixtures = asRecord(stateLike.fixtures);
-  const landscape = asRecord(stateLike.landscape);
-  const coolingTower = asRecord(stateLike.coolingTower);
-  const rainwater = asRecord(stateLike.rainwater);
-  const waterBalance = asRecord(stateLike.waterBalance);
-
-  const mergeScenario = (key:'wet'|'dry') => {
-    const incoming = asRecord(waterBalance[key]);
-    const sources = Array.isArray(incoming.sources) ? incoming.sources.map(asRecord) : [];
-    const uses = Array.isArray(incoming.uses) ? incoming.uses.map(asRecord) : [];
+// ─── Main App ───
+// Tipologi selector is driven by the engine config, so the label can never
+// disagree with the constants actually used in the calculation.
+const SCHEME_STEPS = [1, 2, 3, 4, 5, 6];
+function buildSchemes() {
+  return (Object.keys(TYPOLOGY_CONFIG) as TypologyId[]).map(id => {
+    const cfg = TYPOLOGY_CONFIG[id];
     return {
-      sources: base.waterBalance[key].sources.map(row => ({ ...row, ...(sources.find(r => r.id === row.id) ?? {}) })),
-      uses: base.waterBalance[key].uses.map(row => ({ ...row, ...(uses.find(r => r.id === row.id) ?? {}) })),
+      id,
+      label: cfg.label,
+      icon: <Building2 size={18} />,
+      steps: SCHEME_STEPS,
+      disabled: !cfg.active,
+      note: cfg.active ? 'Aktif — Phase 1' : (cfg.note ?? `Phase ${cfg.phase}`),
     };
-  };
-
-  return {
-    ...base,
-    building: { ...base.building, ...building },
-    fixtures: { ...base.fixtures, ...fixtures } as AppState['fixtures'],
-    hasUrinal: typeof stateLike.hasUrinal === 'boolean' ? stateLike.hasUrinal : base.hasUrinal,
-    landscape: {
-      ...base.landscape,
-      ...landscape,
-      zones: Array.isArray(landscape.zones) ? landscape.zones as AppState['landscape']['zones'] : base.landscape.zones,
-    },
-    coolingTower: { ...base.coolingTower, ...coolingTower },
-    rainwater: { ...base.rainwater, ...rainwater },
-    waterBalance: {
-      wet: mergeScenario('wet'),
-      dry: mergeScenario('dry'),
-    },
-  };
-}
-
-function loadInitialState(): AppState {
-  if (typeof window === 'undefined') return createDefaultState();
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    return raw ? mergeStoredState(JSON.parse(raw)) : createDefaultState();
-  } catch {
-    return createDefaultState();
-  }
+  });
 }
 
 export default function App() {
-  const [step, setStep]           = useState(1);
-  const [state, setState]         = useState<AppState>(()=>loadInitialState());
-  const [notif, setNotif]         = useState<{ type:'ok'|'err'|'warn'; msgs:string[] }|null>(null);
-  const [sidebarOpen, setSlide]   = useState(false);
-  const { isMobile, isTablet, isDesktop } = useBreakpoint();
+  const [step, setStep] = useState(1);
+  const [state, setState] = useState<AppState>(createDefaultState());
+  const [notif, setNotif] = useState<{ type: 'ok' | 'err' | 'warn'; msgs: string[] } | null>(null);
 
-  const R   = useMemo(()=>calcAll(state),[state]);
+  const R = useMemo(() => calcAll(state), [state]);
+  const issues = useMemo(() => collectIssues(state), [state]);
+  const schemes = useMemo(buildSchemes, []);
 
-  useEffect(()=>{
-    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* ignore private-mode storage errors */ }
-  },[state]);
+  // ── Undo history — throttled so a burst of typing is one step, not one per key ──
+  const historyRef = useRef<AppState[]>([]);
+  const lastStateRef = useRef<AppState>(state);
+  const lastPushRef = useRef(0);
+  const undoingRef = useRef(false);
+  const [historyDepth, setHistoryDepth] = useState(0);
 
-  const showNotif = (type:'ok'|'err'|'warn', msgs:string[]) => {
+  useEffect(() => {
+    if (undoingRef.current) {
+      undoingRef.current = false;
+      lastStateRef.current = state;
+      return;
+    }
+    const prev = lastStateRef.current;
+    if (prev !== state) {
+      const now = Date.now();
+      if (historyRef.current.length === 0 || now - lastPushRef.current > 400) {
+        historyRef.current.push(prev);
+        if (historyRef.current.length > 30) historyRef.current.shift();
+        lastPushRef.current = now;
+        setHistoryDepth(historyRef.current.length);
+      }
+    }
+    lastStateRef.current = state;
+  }, [state]);
+
+  const handleUndo = useCallback(() => {
+    const prev = historyRef.current.pop();
+    if (!prev) return;
+    undoingRef.current = true;
+    setState(prev);
+    setHistoryDepth(historyRef.current.length);
+  }, []);
+
+  const resetHistory = useCallback(() => {
+    historyRef.current = [];
+    setHistoryDepth(0);
+  }, []);
+
+  const showNotif = useCallback((type: 'ok' | 'err' | 'warn', msgs: string[]) => {
     setNotif({ type, msgs });
-    setTimeout(()=>setNotif(null), 6000);
-  };
+    window.setTimeout(() => setNotif(null), 6000);
+  }, []);
 
-  const handleImportJSON = useCallback(async()=>{
+  const handleSchemeChange = useCallback((id: string) => {
+    const cfg = TYPOLOGY_CONFIG[id as TypologyId];
+    if (!cfg) return;
+    if (!cfg.active) {
+      showNotif('warn', [`Tipologi ${cfg.label} belum aktif (${cfg.note ?? `Phase ${cfg.phase}`}).`]);
+      return;
+    }
+    setState(s => ({ ...s, building: { ...s.building, typology: id as TypologyId } }));
+  }, [showNotif]);
+
+  const handleImport = useCallback(async () => {
     try {
       const raw = await pickJSONFile();
       const res = parseAndValidate(raw);
-      if(res.ok){ setState(res.state); setStep(1); showNotif('ok',['Data JSON berhasil diimpor.']); }
-      else showNotif('err', res.errors);
-    } catch(e:unknown){ showNotif('err',[e instanceof Error?e.message:'Gagal membaca file JSON.']); }
-  },[]);
+      if (res.ok) {
+        setState(res.state);
+        setStep(1);
+        showNotif('ok', ['Data JSON berhasil diimpor.']);
+      } else {
+        showNotif('err', res.errors);
+      }
+    } catch (e: unknown) {
+      showNotif('err', [e instanceof Error ? e.message : 'Gagal membaca file JSON.']);
+    }
+  }, [showNotif]);
 
-  const handleExportJSON = useCallback(()=>{ downloadJSON(state); showNotif('ok',['Diekspor sebagai JSON.']); },[state]);
+  const handleExport = useCallback(() => {
+    downloadJSON(state);
+    showNotif('ok', ['Data JSON berhasil diekspor.']);
+  }, [state, showNotif]);
 
-  const handleResetAll = useCallback(()=>{
-    try { window.localStorage.removeItem(STORAGE_KEY); } catch { /* ignore private-mode storage errors */ }
-    setState(createDefaultState());
-    setStep(1);
-    setSlide(false);
-    showNotif('ok',['Semua data isian berhasil direset.']);
-  },[]);
+  // Step components
+  const stepContent = useMemo(() => [
+    <Step1 key={1} state={state} set={setState} />,
+    <Step2 key={2} state={state} set={setState} />,
+    <Step3 key={3} state={state} set={setState} />,
+    <Step4 key={4} state={state} set={setState} R={R} />,
+    <Step5 key={5} state={state} set={setState} R={R} />,
+    <Step6 key={6} state={state} />,
+  ], [state]);
 
-  const stepContent = [
-    <Step1 key={1} state={state} set={setState}/>,
-    <Step2 key={2} state={state} set={setState}/>,
-    <Step3 key={3} state={state} set={setState}/>,
-    <Step4 key={4} state={state} set={setState}/>,
-    <Step5 key={5} state={state} set={setState}/>,
-    <Step6 key={6} state={state}/>,
-  ];
-  const pad = isMobile?14:22;
+  const wac2Max = 3;
+  const wac1Result = { savingsPct: R.wac1.savingsPct * 100, pts: R.wac1.pts };
+  const wac2Result = { pct: (R.wac2.pts / wac2Max) * 100, pts: R.wac2.pts };
 
   return (
-    <div style={{ display:'flex', minHeight:'100vh', fontFamily:"'Inter',sans-serif", fontSize:14, color:C.s800, background:C.slate }}>
-      {notif && <Notif type={notif.type} msgs={notif.msgs} onClose={()=>setNotif(null)}/>}
-
-      <Sidebar step={step} setStep={setStep} R={R} state={state}
-        onImportJSON={handleImportJSON}
-        onExportJSON={handleExportJSON}
-        onResetAll={handleResetAll}
-        open={sidebarOpen} onClose={()=>setSlide(false)}/>
-
-      <div style={{ flex:1, display:'flex', flexDirection:'column', minWidth:0, overflowX:'hidden' }}>
-        {/* Top bar */}
-        <div style={{ background:'rgba(255,255,255,0.95)', backdropFilter:'blur(6px)',
-          borderBottom:`1px solid ${C.s200}`, padding:`10px ${pad}px`,
-          display:'flex', alignItems:'center', justifyContent:'space-between',
-          position:'sticky', top:0, zIndex:10 }}>
-          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-            {!isDesktop && (
-              <button onClick={()=>setSlide(true)} style={{ background:'none', border:'none', cursor:'pointer', padding:4, color:C.teal, display:'flex' }}>
-                <Menu size={20}/>
-              </button>
-            )}
-            <div>
-              <span style={{ fontSize:11, color:C.s500 }}>Langkah {step}/6</span>
-              <span style={{ color:C.s300, margin:'0 6px' }}>·</span>
-              <span style={{ fontSize:13, fontWeight:700, color:C.teal }}>{isMobile?STEPS[step-1]?.short:STEPS[step-1]?.label}</span>
-            </div>
-          </div>
-          {isMobile && (
-            <div style={{ display:'flex', gap:5 }}>
-              {STEPS.map(s=>(
-                <div key={s.id} onClick={()=>setStep(s.id)} style={{ width:8, height:8, borderRadius:'50%', cursor:'pointer',
-                  background:step===s.id?C.teal:step>s.id?C.mint:C.s200, transition:'0.15s' }}/>
-              ))}
-            </div>
-          )}
-          <div style={{ display:'flex', gap:8 }}>
-            <button disabled={step===1} onClick={()=>setStep(s=>Math.max(1,s-1))} style={{
-              display:'flex', alignItems:'center', gap:4, padding:isMobile?'6px 10px':'6px 14px', borderRadius:8,
-              border:`1px solid ${C.s200}`, background:C.white, cursor:step===1?'not-allowed':'pointer',
-              opacity:step===1?0.4:1, fontSize:12, color:C.s700, fontFamily:'inherit' }}>
-              <ChevronLeft size={13}/>{!isMobile&&'Kembali'}
-            </button>
-            {step<6 && (
-              <button onClick={()=>setStep(s=>Math.min(6,s+1))} style={{
-                display:'flex', alignItems:'center', gap:4, padding:isMobile?'6px 10px':'6px 16px', borderRadius:8,
-                border:'none', background:C.teal, cursor:'pointer', fontSize:12, color:C.mint, fontWeight:700, fontFamily:'inherit' }}>
-                {!isMobile&&'Lanjut'}<ChevronRight size={13}/>
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Tablet tab bar */}
-        {isTablet && (
-          <div style={{ background:C.white, borderBottom:`1px solid ${C.s200}`, display:'flex', overflowX:'auto', padding:'0 14px' }}>
-            {STEPS.map(s=>{
-              const Ic=s.icon, active=step===s.id, done=step>s.id;
-              return (
-                <button key={s.id} onClick={()=>setStep(s.id)} style={{
-                  display:'flex', alignItems:'center', gap:6, padding:'10px 14px',
-                  background:'none', border:'none', cursor:'pointer', fontFamily:'inherit',
-                  fontSize:12, fontWeight:active?700:400,
-                  color:active?C.teal:done?C.green:C.s400,
-                  borderBottom:`2px solid ${active?C.teal:'transparent'}`, whiteSpace:'nowrap', flexShrink:0 }}>
-                  <Ic size={13}/>{s.short}{done&&<CheckCircle2 size={11} style={{ color:C.green }}/>}
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        <div style={{ padding:pad, flex:1, overflowY:'auto' }}>
-          {stepContent[step-1]}
-        </div>
+    <AppShell
+      currentStep={step}
+      onStepChange={setStep}
+      schemeId={state.building.typology}
+      schemeLabel={TYPOLOGY_CONFIG[state.building.typology].label}
+      onSchemeChange={handleSchemeChange}
+      issueCount={issues.length}
+      onUndo={handleUndo}
+      canUndo={historyDepth > 0}
+      savedAt={null}
+      wac1Result={wac1Result}
+      wac2Result={wac2Result}
+      onImport={handleImport}
+      onExport={handleExport}
+    >
+      {notif && <Notif type={notif.type} msgs={notif.msgs} onClose={() => setNotif(null)} />}
+      <div style={{ maxWidth: 1170, margin: '0 auto' }}>
+        <IssueBanner issues={issues} onJump={setStep} />
+        {stepContent[step - 1]}
       </div>
-    </div>
+    </AppShell>
   );
 }

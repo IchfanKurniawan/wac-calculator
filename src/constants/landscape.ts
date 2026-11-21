@@ -1,5 +1,5 @@
 export const LANDSCAPE_BASELINE_RATE = 5;
-export const LANDSCAPE_MAX_ZONES = 5;
+export const LANDSCAPE_MAX_ZONES = 10;
 export const LANDSCAPE_SHARE_DECIMALS = 3;
 export const LANDSCAPE_SHARE_REQUIRED_PCT = 100;
 

@@ -54,6 +54,7 @@ export interface LandscapeData {
 export interface CoolingTowerData {
   enabled: boolean;
   load: number; // TR (Ton Refrigeration)
+  coc: number;  // design cycles of concentration (baseline 3)
 }
 
 // ─── Rainwater Harvesting ─────────────────────────────────────────────────────
@@ -73,6 +74,7 @@ export interface RainwaterData {
 
 export interface WBSourceRow {
   id: string;
+  auto: boolean;           // true = use computed available, false = use manual volumeDiolah
   // For rows whose "available" is user-supplied (CT condensate, others):
   availableManual: number; // L/day — used when id is 'ct_condensate' or 'others'
   volumeDiolah: number;    // L/day — user input (≤ available)
@@ -80,8 +82,9 @@ export interface WBSourceRow {
 
 export interface WBUseRow {
   id: string;
-  dariAlt: number;     // L/day from alternative water — user input
-  dariRecycle: number; // L/day from recycled water   — user input
+  auto: boolean;           // true = use computed required, false = manual dariAlt/dariRecycle
+  dariAlt: number;         // L/day from alternative water — user input
+  dariRecycle: number;     // L/day from recycled water   — user input
 }
 
 export interface WBScenario {
@@ -170,7 +173,10 @@ export interface WAC1Result {
   designNorm: number;
   ratio: number;        // design / baseline
   savingsPct: number;   // 1 − ratio
+  /** WAC P2 prerequisite: rainwater tank holds ≥ 10% of the ideal volume. */
   p2Pass: boolean;
+  /** False when the user has not entered enough data to evaluate WAC P2 at all. */
+  p2DataComplete: boolean;
   pts: number;          // 0–8
 }
 

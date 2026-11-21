@@ -11,6 +11,7 @@ import {
   LANDSCAPE_MAX_ZONES,
   landscapeSharePct,
 } from '../constants/landscape';
+import { CT_BASELINE_COC, CT_MAX_COC, CT_MIN_COC } from '../constants/scoring';
 import { sanitizeText, sanitizeNumber, sanitizeRatio, sanitizeBool, sanitizeEnum } from './sanitize';
 import { mkWBScenario } from './defaults';
 
@@ -144,7 +145,11 @@ function validateLandscape(raw: unknown, errors: string[]) {
 
 function validateCT(raw: unknown) {
   const ct = obj(raw);
-  return { enabled: sanitizeBool(ct.enabled), load: sanitizeNumber(ct.load, 0, 1e5) };
+  return {
+    enabled: sanitizeBool(ct.enabled),
+    load: sanitizeNumber(ct.load, 0, 1e5),
+    coc: sanitizeNumber(ct.coc ?? CT_BASELINE_COC, CT_MIN_COC, CT_MAX_COC),
+  };
 }
 
 function validateRainwater(raw: unknown) {
@@ -170,6 +175,7 @@ function validateWaterBalance(raw: unknown): AppState['waterBalance'] {
       const rr = obj(r);
       return {
         id: sanitizeText(rr.id ?? ''),
+        auto: typeof rr.auto === 'boolean' ? rr.auto : true,
         availableManual: sanitizeNumber(rr.availableManual, 0, 1e10),
         volumeDiolah:    sanitizeNumber(rr.volumeDiolah, 0, 1e10),
       };
@@ -178,6 +184,7 @@ function validateWaterBalance(raw: unknown): AppState['waterBalance'] {
       const rr = obj(r);
       return {
         id:          sanitizeText(rr.id ?? ''),
+        auto:        typeof rr.auto === 'boolean' ? rr.auto : true,
         dariAlt:     sanitizeNumber(rr.dariAlt, 0, 1e10),
         dariRecycle: sanitizeNumber(rr.dariRecycle, 0, 1e10),
       };

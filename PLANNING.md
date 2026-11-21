@@ -128,11 +128,17 @@ Source: GREENSHIP Water Calculator v2.2, confirmed against SNI 03-8153-2015
 
 ### WAC P2 — Prerequisite
 
-**Rule:** Passes as long as `baselineNorm > 0` (i.e., the user has filled enough data to compute a baseline). WAC P2 is a data-completeness gate, not a threshold comparison.
+**Rule:** requires a rainwater tank that covers at least 10% of the ideal harvestable volume, plus enough data to compute a baseline. Data completeness and the prerequisite verdict are reported separately.
 
 ```
-p2Pass = (baselineNorm > 0)
+p2DataComplete = (baselineNorm > 0)
+p2Pass         = p2DataComplete AND hasTank AND capRatio ≥ 0.10
+
+capRatio   = min(1, tankCapacity / idealVolume)
+idealVolume = roofArea × avgRainfall × runoffCoef
 ```
+
+WAC 1 points come from the ratio ladder below; they are not zeroed by a missing rainwater tank.
 
 ### WAC 2 — Water Fixture Reduction (NB 1.3, max 3 pts)
 
